@@ -1,32 +1,41 @@
 import { useState, useCallback } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { 
-  FileText, 
-  Download, 
-  Upload, 
-  Copy, 
-  Trash2, 
-  Eye, 
-  Code,
-  CheckCircle2,
-  FileCode,
-  Sparkles,
-  RefreshCw,
-  X,
-  FileCheck,
-  Terminal,
-  Cpu,
-  Zap
+import { Input } from "@/components/ui/input";
+import {
+  FileText, Download, Upload, Copy, Trash2, Eye, Code, CheckCircle2,
+  Sparkles, RefreshCw, X, FileCheck, Terminal, Library, Search, Star,
+  Pencil, Save, BookMarked, FileCode2, ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import { cn } from "@/lib/utils";
 import axios from "axios";
-import { DB } from "../types";
+import { DB, SavedPrompt } from "../types";
+import { getAIConfig } from "../aiConfig";
+import { isUnlocked } from "../auth";
+import { Label } from "@/components/ui/label";
 
-export function MarkdownDownloader({ db, updateDb }: { db: DB, updateDb: (db: DB) => void }) {
+interface MarkdownProProps {
+  db: DB;
+  updateDb: (db: DB) => void;
+}
+
+// Lenguajes de destino simplificados a los realmente útiles en el día a día de Cibermedida
+const LANGUAGES = [
+  { id: "python", name: "Python", icon: <Terminal className="w-4 h-4" />, ext: "py", mime: "text/x-python",
+    desc: "Scripts de procesamiento, automatización local" },
+  { id: "javascript", name: "JavaScript", icon: <Code className="w-4 h-4" />, ext: "js", mime: "application/javascript",
+    desc: "Node.js, automatizaciones web" },
+  { id: "appsscript", name: "Apps Script", icon: <FileCode2 className="w-4 h-4" />, ext: "gs", mime: "application/javascript",
+    desc: "Automatizar Google Sheets, Docs y Forms" },
+];
+
+export function MarkdownDownloader({ db, updateDb }: MarkdownProProps) {
+  const [tab, setTab] = useState<"convertir" | "biblioteca">("convertir");
+
+  // Convertir
   const [markdown, setMarkdown] = useState<string>("");
   const [generatedCode, setGeneratedCode] = useState<string>("");
   const [selectedLanguage, setSelectedLanguage] = useState("python");
@@ -36,19 +45,29 @@ export function MarkdownDownloader({ db, updateDb }: { db: DB, updateDb: (db: DB
   const [dragActive, setDragActive] = useState(false);
   const [file, setFile] = useState<File | null>(null);
 
-  const LANGUAGES = [
-    { id: "python", name: "Python", icon: <Terminal className="w-4 h-4" />, ext: "py", mime: "text/x-python" },
-    { id: "mojo", name: "Mojo", icon: <Zap className="w-4 h-4" />, ext: "mojo", mime: "text/x-python" },
-    { id: "julia", name: "Julia", icon: <Cpu className="w-4 h-4" />, ext: "jl", mime: "text/x-julia" },
-    { id: "javascript", name: "Node.js", icon: <Code className="w-4 h-4" />, ext: "js", mime: "application/javascript" },
-    { id: "typescript", name: "TypeScript", icon: <FileCode className="w-4 h-4" />, ext: "ts", mime: "text/typescript" },
-    { id: "java", name: "Java", icon: <Cpu className="w-4 h-4" />, ext: "java", mime: "text/x-java-source" },
-    { id: "cpp", name: "C++", icon: <Terminal className="w-4 h-4" />, ext: "cpp", mime: "text/x-c++src" },
-    { id: "rust", name: "Rust", icon: <Zap className="w-4 h-4" />, ext: "rs", mime: "text/x-rustsource" },
-    { id: "go", name: "Go", icon: <Cpu className="w-4 h-4" />, ext: "go", mime: "text/x-go" },
-    { id: "sql", name: "SQL", icon: <FileText className="w-4 h-4" />, ext: "sql", mime: "text/x-sql" },
-  ];
+  // Guardar en biblioteca
+  const [showSaveForm, setShowSaveForm] = useState(false);
+  const [saveTitle, setSaveTitle] = useState("");
 
+  // Biblioteca
+  const [searchQuery, setSearchQuery] = useState("");
+  const [onlyFavs, setOnlyFavs] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editContent, setEditContent] = useState("");
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const markdowns = db.markdowns || [];
+
+  const safeUpdate = (newDb: DB) => {
+    if (!isUnlocked()) {
+      toast.error("Desbloquea la consola en Configuración para guardar");
+      return false;
+    }
+    updateDb(newDb);
+    return true;
+  };
+
+  // ── Conversión ──
   const handleFileUpload = async (selectedFile: File) => {
     setFile(selectedFile);
     setIsUploading(true);
@@ -57,19 +76,14 @@ export function MarkdownDownloader({ db, updateDb }: { db: DB, updateDb: (db: DB
 
     try {
       const response = await axios.post("/api/convert", formData, {
-        headers: { "Content-Type": "multipart/form-data" }
+        headers: { "Content-Type": "multipart/form-data" },
       });
-
       setMarkdown((prev) => prev + (prev ? "\n\n" : "") + response.data.markdown);
-      toast.success("Archivo procesado", {
-        description: `${selectedFile.name} convertido a Markdown con éxito.`
-      });
+      toast.success("Archivo convertido", { description: `${selectedFile.name} se transformó en Markdown correctamente.` });
       setViewMode("preview");
     } catch (error) {
       console.error("Upload error:", error);
-      toast.error("Error de conversión", {
-        description: "El motor MarkItDown no pudo procesar este archivo."
-      });
+      toast.error("Error de conversión", { description: "No se pudo procesar este archivo. Comprueba el formato." });
     } finally {
       setIsUploading(false);
       setDragActive(false);
@@ -78,114 +92,66 @@ export function MarkdownDownloader({ db, updateDb }: { db: DB, updateDb: (db: DB
 
   const transformToCode = async (silent = false) => {
     if (!markdown) return null;
-    
     setIsTransforming(true);
     try {
-      const currentLang = LANGUAGES.find(l => l.id === selectedLanguage) || LANGUAGES[0];
-      
-      const response = await axios.post("/api/transform", {
-        markdown,
-        language: currentLang.name,
-        apiKey: localStorage.getItem("GEMINI_API_KEY")
-      });
-
+      const currentLang = LANGUAGES.find((l) => l.id === selectedLanguage) || LANGUAGES[0];
+      const { provider, model } = getAIConfig();
+      const response = await axios.post("/api/transform", { markdown, language: currentLang.name, provider, model });
       const code = response.data.code || "";
-      
       setGeneratedCode(code);
       if (!silent) {
         setViewMode("code");
-        toast.success(`Transformación a ${currentLang.name} Completa`, {
-          description: "El código ha sido generado y está listo para descargar."
-        });
+        toast.success(`Script en ${currentLang.name} generado`, { description: "Revísalo antes de descargarlo o ejecutarlo." });
       }
       return code;
     } catch (error: any) {
       console.error("Transformation error:", error);
-      const errorMsg = error.response?.data?.details || error.message;
-      if (!silent) {
-        toast.error("Error de IA", { description: errorMsg || "No se pudo realizar la transformación de código." });
-      }
+      if (!silent) toast.error("Error al generar el script", { description: error.response?.data?.details || error.message });
       return null;
     } finally {
       setIsTransforming(false);
     }
   };
 
-  const handleExportCode = async () => {
-    if (!markdown) {
-      toast.error("Operación no permitida", { description: "Primero debes tener contenido extraído en Markdown." });
-      return;
-    }
-
-    if (generatedCode) {
-      downloadCode();
-    } else {
-      toast.loading("Generando lógica...", { id: "export-transform" });
-      const code = await transformToCode(true);
-      if (code) {
-        toast.dismiss("export-transform");
-        // We delay slightly to ensure state or just use the returned code
-        const currentLang = LANGUAGES.find(l => l.id === selectedLanguage) || LANGUAGES[0];
-        const fileName = file ? file.name.split('.')[0] : "cybermedida_logic";
-        downloadBlob(code, `${fileName}_${new Date().getTime()}.${currentLang.ext}`, currentLang.mime);
-      } else {
-        toast.error("Falló la generación automática", { id: "export-transform" });
-      }
-    }
-  };
-
   const downloadBlob = (content: string, filename: string, mimeType: string) => {
     if (!content || content.trim() === "") {
-      toast.error("No hay contenido para descargar", {
-        description: "Primero debes extraer o transformar algún contenido."
-      });
+      toast.error("No hay contenido para descargar");
       return;
     }
-    try {
-      const blob = new Blob([content], { type: mimeType });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      
-      // Mandatory for iFrame/mobile downloads
-      document.body.appendChild(link);
-      link.click();
-      
-      // Small delay for browser interaction
-      setTimeout(() => {
-        document.body.removeChild(link);
-        window.URL.revokeObjectURL(url);
-      }, 100);
-      
-      toast.success(`Descarga Iniciada`, {
-        description: `Archivo ${filename} generado con éxito.`
-      });
-    } catch (err) {
-      console.error("Download error:", err);
-      toast.error("Error de Descarga", {
-        description: "El sistema no pudo procesar la solicitud de descarga local."
-      });
-    }
+    const blob = new Blob([content], { type: mimeType });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(() => { document.body.removeChild(link); window.URL.revokeObjectURL(url); }, 100);
+    toast.success("Descarga iniciada", { description: filename });
   };
 
   const downloadMarkdown = () => {
-    const fileName = file ? file.name.split('.')[0] : "cybermedida_export";
-    downloadBlob(markdown, `${fileName}_${new Date().getTime()}.md`, "text/markdown");
+    const fileName = file ? file.name.split(".")[0] : "cibermedida_export";
+    downloadBlob(markdown, `${fileName}.md`, "text/markdown");
   };
 
-  const downloadCode = () => {
-    const currentLang = LANGUAGES.find(l => l.id === selectedLanguage) || LANGUAGES[0];
-    const fileName = file ? file.name.split('.')[0] : "cybermedida_logic";
-    downloadBlob(generatedCode, `${fileName}_${new Date().getTime()}.${currentLang.ext}`, currentLang.mime);
+  const downloadCode = async () => {
+    const currentLang = LANGUAGES.find((l) => l.id === selectedLanguage) || LANGUAGES[0];
+    const fileName = file ? file.name.split(".")[0] : "cibermedida_script";
+    if (generatedCode) {
+      downloadBlob(generatedCode, `${fileName}.${currentLang.ext}`, currentLang.mime);
+    } else {
+      toast.loading("Generando script...", { id: "export-transform" });
+      const code = await transformToCode(true);
+      toast.dismiss("export-transform");
+      if (code) downloadBlob(code, `${fileName}.${currentLang.ext}`, currentLang.mime);
+      else toast.error("No se pudo generar el script");
+    }
   };
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragActive(false);
-    if (e.dataTransfer.files?.[0]) {
-      handleFileUpload(e.dataTransfer.files[0]);
-    }
+    if (e.dataTransfer.files?.[0]) handleFileUpload(e.dataTransfer.files[0]);
   }, []);
 
   const copyToClipboard = () => {
@@ -195,271 +161,327 @@ export function MarkdownDownloader({ db, updateDb }: { db: DB, updateDb: (db: DB
   };
 
   const clearWorkspace = () => {
-    setMarkdown("");
-    setGeneratedCode("");
-    setFile(null);
+    setMarkdown(""); setGeneratedCode(""); setFile(null);
     toast.info("Espacio de trabajo despejado");
   };
 
+  // ── Guardar en biblioteca ──
+  const saveToLibrary = () => {
+    if (!markdown.trim()) { toast.error("No hay contenido para guardar"); return; }
+    const title = saveTitle.trim() || (file ? file.name.split(".")[0] : `Conversión ${new Date().toLocaleDateString("es-ES")}`);
+    const entry: SavedPrompt = {
+      id: Math.random().toString(36).substr(2, 9),
+      title,
+      content: markdown,
+      tags: [file ? file.name : "texto manual"],
+      isFavorite: false,
+      createdAt: Date.now(),
+      type: "markdown",
+      category: file ? file.name.split(".").pop() || "md" : "manual",
+    };
+    if (safeUpdate({ ...db, markdowns: [entry, ...markdowns] })) {
+      setShowSaveForm(false);
+      setSaveTitle("");
+      toast.success("Guardado en la biblioteca");
+    }
+  };
+
+  // ── Acciones biblioteca ──
+  const toggleFav = (id: string) => {
+    safeUpdate({ ...db, markdowns: markdowns.map((m) => (m.id === id ? { ...m, isFavorite: !m.isFavorite } : m)) });
+  };
+  const deleteEntry = (id: string) => {
+    if (!window.confirm("¿Eliminar esta conversión de la biblioteca?")) return;
+    if (safeUpdate({ ...db, markdowns: markdowns.filter((m) => m.id !== id) })) toast.success("Eliminada");
+  };
+  const saveEdit = (id: string) => {
+    if (safeUpdate({ ...db, markdowns: markdowns.map((m) => (m.id === id ? { ...m, content: editContent } : m)) })) {
+      setEditingId(null);
+      toast.success("Cambios guardados");
+    }
+  };
+  const copyEntry = (text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+    toast.success("Copiado");
+  };
+  const downloadEntry = (entry: SavedPrompt) => {
+    downloadBlob(entry.content, `${entry.title}.md`, "text/markdown");
+  };
+  const loadIntoConverter = (entry: SavedPrompt) => {
+    setMarkdown(entry.content);
+    setGeneratedCode("");
+    setFile(null);
+    setViewMode("preview");
+    setTab("convertir");
+    toast.success("Cargado en el conversor");
+  };
+
+  const filtered = markdowns.filter((m) => {
+    if (onlyFavs && !m.isFavorite) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      if (!m.title.toLowerCase().includes(q) && !m.content.toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom duration-700">
-      <header className="flex flex-col gap-4 border-b border-slate-200 pb-6 lg:flex-row lg:items-center lg:justify-between lg:gap-1">
-        <div>
-          <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest">
-            Herramientas / <span className="text-indigo-600">Conversor Universal</span>
+    <div className="space-y-6 animate-in slide-in-from-bottom duration-700">
+      {/* Header */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-cyan-950 to-slate-900 p-6 shadow-2xl">
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_rgba(14,165,168,0.18),transparent_60%)]" />
+        <div className="relative z-10 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-[10px] font-bold text-cyan-400 uppercase tracking-widest mb-1">
+              <FileText className="w-3 h-3" /> MarkDown Pro
+            </div>
+            <h2 className="text-2xl font-extrabold text-white tracking-tight">Conversor de Documentos</h2>
+            <p className="text-sm text-slate-400 mt-1">Convierte PDF, Word, Excel e imágenes a Markdown, y genera scripts a partir del contenido</p>
           </div>
-          <h2 className="text-3xl font-extrabold tracking-tight text-slate-900">Extracción MarkItDown</h2>
-          <p className="text-sm text-slate-500">Convierte documentos complejos (PDF, DOCX, XLSX, IMG) en Markdown y Lógica de IA.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <Button 
-            variant="outline" 
-            onClick={clearWorkspace} 
-            disabled={!markdown && !file}
-            className="rounded-xl border-slate-200 text-slate-500 hover:bg-slate-50 font-bold uppercase tracking-widest text-[10px] h-10 px-4 flex-1 sm:flex-none shadow-sm"
-          >
-            <Trash2 className="w-3 h-3 mr-2" /> Limpiar
-          </Button>
-          
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <Button 
-              onClick={downloadMarkdown}
-              disabled={!markdown}
-              className="flex-1 sm:flex-none rounded-xl bg-slate-900 hover:bg-black text-white font-bold uppercase tracking-widest text-[10px] h-10 px-6 shadow-md shadow-slate-200 transition-all active:scale-95"
-            >
-              <Download className="w-3.5 h-3.5 mr-2" /> Exportar .MD
-            </Button>
-            
-            <Button 
-              onClick={handleExportCode}
-              disabled={!markdown || isTransforming}
-              className="flex-1 sm:flex-none rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase tracking-widest text-[10px] h-10 px-6 shadow-md shadow-indigo-100 transition-all active:scale-95"
-            >
-              {isTransforming ? <RefreshCw className="w-3.5 h-3.5 mr-2 animate-spin" /> : <Download className="w-3.5 h-3.5 mr-2" />}
-              Exportar .{LANGUAGES.find(l => l.id === selectedLanguage)?.ext || 'code'}
-            </Button>
-          </div>
-        </div>
-      </header>
-
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Dropzone & Status Area */}
-        <div className="lg:col-span-4 space-y-6">
-          <label 
-            htmlFor="file-upload"
-            onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
-            onDragLeave={() => setDragActive(false)}
-            onDrop={onDrop}
-            className={cn(
-              "relative flex flex-col items-center justify-center min-h-[400px] border-2 border-dashed rounded-3xl transition-all cursor-pointer overflow-hidden p-8 text-center",
-              dragActive ? "border-indigo-500 bg-indigo-50/50 shadow-inner" : "border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-slate-300"
-            )}
-          >
-            <input 
-              id="file-upload" 
-              type="file" 
-              className="hidden" 
-              onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
-            />
-            
-            {isUploading ? (
-              <div className="flex flex-col items-center gap-6">
-                <div className="relative">
-                  <RefreshCw className="w-16 h-16 text-indigo-600 animate-spin" />
-                  <Sparkles className="absolute -top-1 -right-1 w-6 h-6 text-amber-400 animate-pulse" />
-                </div>
-                <div className="space-y-1">
-                  <p className="text-sm font-extrabold text-slate-800 uppercase tracking-widest">Extrayendo Datos</p>
-                  <p className="text-[10px] text-slate-500 font-bold uppercase tracking-tighter">Motor MarkItDown en Ejecución...</p>
-                </div>
-              </div>
-            ) : file ? (
-              <div className="flex flex-col items-center gap-4 animate-in zoom-in-95 duration-300">
-                <div className="w-20 h-20 bg-indigo-100 rounded-3xl flex items-center justify-center text-indigo-600 shadow-sm">
-                  <FileCheck className="w-10 h-10" />
-                </div>
-                <div className="space-y-1">
-                  <p className="text-sm font-extrabold text-slate-800 truncate max-w-[200px] px-4">{file.name}</p>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{(file.size / 1024).toFixed(2)} KB</p>
-                </div>
-                <Button 
-                   variant="ghost" 
-                   size="sm" 
-                   onClick={(e) => { e.preventDefault(); setFile(null); }}
-                   className="text-slate-400 hover:text-rose-600 text-[10px] font-bold uppercase tracking-widest"
-                >
-                  <X className="w-3.5 h-3.5 mr-1" /> Eliminar
-                </Button>
-              </div>
-            ) : (
-              <>
-                <div className="w-20 h-20 bg-white rounded-3xl shadow-sm border border-slate-100 flex items-center justify-center mb-6 text-indigo-600 transition-transform group-hover:scale-110">
-                  <Upload className="w-10 h-10" />
-                </div>
-                <h4 className="text-base font-extrabold text-slate-900 tracking-tight">Cargar Documento</h4>
-                <p className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-widest leading-relaxed">
-                  Arrastra aquí o haz clic para explorar<br/>
-                  <span className="text-indigo-400">Pipeline de Extracción IA Activado</span>
-                </p>
-                <div className="mt-8 px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold uppercase tracking-widest rounded-xl shadow-xl shadow-indigo-100 transition-all">
-                  Seleccionar Archivo
-                </div>
-              </>
-            )}
-
-            {dragActive && (
-              <div className="absolute inset-0 bg-indigo-600/10 backdrop-blur-[2px] flex items-center justify-center border-4 border-indigo-500 rounded-3xl m-1">
-                <div className="bg-white px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-3">
-                  <div className="w-2 h-2 bg-indigo-600 rounded-full animate-ping" />
-                  <span className="text-xs font-extrabold text-indigo-600 uppercase tracking-widest">Proceder con la Ingesta</span>
-                </div>
-              </div>
-            )}
-          </label>
-
-          <Card className="rounded-2xl border-slate-200 shadow-sm bg-slate-900 text-white overflow-hidden p-6 relative">
-             <div className="relative z-10 space-y-4">
-                <div className="flex items-center gap-2">
-                   <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                   <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-400">Status: AI Transformer Active</p>
-                </div>
-                
-                <div className="space-y-2">
-                  <label className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Lenguaje de Destino</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {LANGUAGES.map((lang) => (
-                      <button
-                        key={lang.id}
-                        onClick={() => setSelectedLanguage(lang.id)}
-                        className={cn(
-                          "flex items-center gap-2 px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
-                          selectedLanguage === lang.id 
-                            ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/50" 
-                            : "bg-slate-800 text-slate-400 hover:text-slate-200"
-                        )}
-                      >
-                        {lang.icon}
-                        {lang.name}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <Button 
-                   onClick={() => transformToCode()}
-                   disabled={!markdown || isTransforming}
-                   className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase tracking-widest text-[9px] h-10 shadow-lg shadow-indigo-900/40"
-                >
-                   {isTransforming ? <RefreshCw className="w-3 h-3 mr-2 animate-spin" /> : <Cpu className="w-3 h-3 mr-2" />}
-                   TRANSFORMAR A {selectedLanguage.toUpperCase()}
-                </Button>
-             </div>
-             <div className="absolute top-0 right-0 p-4 opacity-5 rotate-12 blur-sm scale-150">
-                <Terminal className="w-24 h-24" />
-             </div>
-          </Card>
-        </div>
-
-        {/* Output Workspace */}
-        <div className="lg:col-span-8 flex flex-col gap-4 min-h-[600px]">
-          <Card className="rounded-3xl border-slate-200 shadow-2xl bg-white overflow-hidden flex-1 flex flex-col border-none">
-            <CardHeader className="bg-slate-50/50 border-b border-slate-100 flex flex-row items-center justify-between px-8 py-4">
-              <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-hide">
-                <div 
-                  onClick={() => setViewMode("edit")}
-                  className={cn(
-                    "flex items-center gap-2 px-3 py-1.5 rounded-lg text-[9px] font-bold tracking-widest cursor-pointer transition-all uppercase whitespace-nowrap",
-                    viewMode === "edit" ? "bg-white shadow-sm text-indigo-600 ring-1 ring-slate-200" : "text-slate-400 hover:text-slate-600"
-                  )}
-                >
-                  <Code className="w-3 h-3" /> RAW MD
-                </div>
-                <div 
-                  onClick={() => setViewMode("preview")}
-                  className={cn(
-                    "flex items-center gap-2 px-3 py-1.5 rounded-lg text-[9px] font-bold tracking-widest cursor-pointer transition-all uppercase whitespace-nowrap",
-                    viewMode === "preview" ? "bg-white shadow-sm text-indigo-600 ring-1 ring-slate-200" : "text-slate-400 hover:text-slate-600"
-                  )}
-                >
-                  <Eye className="w-3 h-3" /> PREVIEW
-                </div>
-                <div 
-                  onClick={() => setViewMode("code")}
-                  className={cn(
-                    "flex items-center gap-2 px-3 py-1.5 rounded-lg text-[9px] font-bold tracking-widest cursor-pointer transition-all uppercase whitespace-nowrap",
-                    viewMode === "code" ? "bg-white shadow-sm text-amber-600 ring-1 ring-slate-200" : "text-slate-400 hover:text-slate-600"
-                  )}
-                >
-                  <Terminal className="w-3 h-3" /> {selectedLanguage.toUpperCase()} ENGINE
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  onClick={copyToClipboard}
-                  disabled={viewMode === "code" ? !generatedCode : !markdown}
-                  className="h-8 px-3 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-white font-bold text-[9px] uppercase tracking-widest"
-                >
-                  <Copy className="w-3.5 h-3.5 mr-2" /> COPIAR
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0 flex-1 relative bg-slate-50/30">
-              {viewMode === "edit" ? (
-                <Textarea 
-                  value={markdown}
-                  onChange={(e) => setMarkdown(e.target.value)}
-                  placeholder="El contenido extraído aparecerá aquí..."
-                  className="w-full h-full border-none focus:ring-0 rounded-none p-10 font-mono text-xs leading-relaxed resize-none bg-transparent min-h-[500px]"
-                />
-              ) : viewMode === "code" ? (
-                <div className="p-0 flex flex-col h-full bg-slate-900">
-                   <Textarea 
-                      value={generatedCode}
-                      onChange={(e) => setGeneratedCode(e.target.value)}
-                      placeholder={`Ejecuta 'TRANSFORMAR A ${selectedLanguage.toUpperCase()}' para generar el script de automatización...`}
-                      className="w-full h-full border-none focus:ring-0 rounded-none p-10 font-mono text-[11px] leading-relaxed resize-none bg-transparent min-h-[500px] text-emerald-400"
-                   />
-                </div>
-              ) : (
-                <div className="p-10 markdown-body prose prose-slate max-w-none prose-headings:font-extrabold prose-p:text-slate-600 prose-sm h-full overflow-y-auto bg-white min-h-[500px] border-none">
-                  {markdown ? (
-                    <ReactMarkdown>{markdown}</ReactMarkdown>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center h-[400px] text-slate-300 gap-6 grayscale">
-                      <div className="p-8 bg-slate-50 rounded-full border-2 border-dashed border-slate-100">
-                        <FileText className="w-16 h-16 opacity-20" />
-                      </div>
-                      <div className="text-center space-y-1">
-                        <p className="text-[11px] font-bold uppercase tracking-[0.2em]">Data Stream Idle</p>
-                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Esperando comando de conversión</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-          
-          <div className="flex items-center justify-between px-4 py-2">
-             <div className="flex items-center gap-6 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                <div className="flex items-center gap-2">
-                  <div className="w-1 h-1 bg-slate-300 rounded-full" />
-                  <span>Size: {viewMode === "code" ? generatedCode.length : markdown.length}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-1 h-1 bg-slate-300 rounded-full" />
-                  <span>Node: CM-EXTRACTOR-A1</span>
-                </div>
-             </div>
-             <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Pipeline {viewMode === "code" ? "Code Transform" : "MarkItDown"} Operativo
-             </p>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setTab("convertir")} className={cn("flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all", tab === "convertir" ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/30" : "bg-white/10 text-slate-300 hover:bg-white/20")}>
+              <Upload className="w-4 h-4" /> Convertir
+            </button>
+            <button onClick={() => setTab("biblioteca")} className={cn("flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-all", tab === "biblioteca" ? "bg-cyan-500 text-white shadow-lg shadow-cyan-500/30" : "bg-white/10 text-slate-300 hover:bg-white/20")}>
+              <Library className="w-4 h-4" /> Biblioteca
+              {markdowns.length > 0 && <span className="bg-white/20 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">{markdowns.length}</span>}
+            </button>
           </div>
         </div>
       </div>
-    </div>
 
+      {/* ══════════ CONVERTIR ══════════ */}
+      {tab === "convertir" && (
+        <>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+            {/* Dropzone & opciones */}
+            <div className="lg:col-span-4 space-y-5">
+              <label
+                htmlFor="file-upload"
+                onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+                onDragLeave={() => setDragActive(false)}
+                onDrop={onDrop}
+                className={cn(
+                  "relative flex flex-col items-center justify-center min-h-[320px] border-2 border-dashed rounded-2xl transition-all cursor-pointer overflow-hidden p-8 text-center",
+                  dragActive ? "border-cyan-500 bg-cyan-50/50 shadow-inner" : "border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-slate-300"
+                )}
+              >
+                <input id="file-upload" type="file" className="hidden" onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])} />
+                {isUploading ? (
+                  <div className="flex flex-col items-center gap-5">
+                    <div className="relative">
+                      <RefreshCw className="w-12 h-12 text-cyan-600 animate-spin" />
+                      <Sparkles className="absolute -top-1 -right-1 w-5 h-5 text-amber-400 animate-pulse" />
+                    </div>
+                    <p className="text-sm font-bold text-slate-700">Convirtiendo documento…</p>
+                  </div>
+                ) : file ? (
+                  <div className="flex flex-col items-center gap-3 animate-in zoom-in-95 duration-300">
+                    <div className="w-16 h-16 bg-cyan-100 rounded-2xl flex items-center justify-center text-cyan-600">
+                      <FileCheck className="w-8 h-8" />
+                    </div>
+                    <p className="text-sm font-bold text-slate-800 truncate max-w-[220px]">{file.name}</p>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase">{(file.size / 1024).toFixed(1)} KB</p>
+                    <Button variant="ghost" size="sm" onClick={(e) => { e.preventDefault(); setFile(null); }} className="text-slate-400 hover:text-rose-600 text-[10px] font-bold uppercase">
+                      <X className="w-3.5 h-3.5 mr-1" /> Quitar
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="w-16 h-16 bg-white rounded-2xl shadow-sm border border-slate-100 flex items-center justify-center mb-4 text-cyan-600">
+                      <Upload className="w-8 h-8" />
+                    </div>
+                    <h4 className="text-base font-bold text-slate-900">Arrastra un documento aquí</h4>
+                    <p className="text-xs text-slate-400 mt-2">o haz clic para elegirlo</p>
+                    <div className="flex items-center gap-1.5 mt-4 flex-wrap justify-center">
+                      {["PDF", "DOCX", "XLSX", "Imágenes"].map((t) => (
+                        <span key={t} className="text-[9px] font-bold text-slate-500 bg-slate-100 px-2 py-1 rounded-full">{t}</span>
+                      ))}
+                    </div>
+                  </>
+                )}
+                {dragActive && (
+                  <div className="absolute inset-0 bg-cyan-600/10 backdrop-blur-[2px] flex items-center justify-center border-4 border-cyan-500 rounded-2xl m-1">
+                    <div className="bg-white px-5 py-2.5 rounded-xl shadow-2xl text-xs font-bold text-cyan-600 uppercase">Suelta el archivo aquí</div>
+                  </div>
+                )}
+              </label>
+
+              <Card className="rounded-2xl border-slate-200 shadow-sm overflow-hidden">
+                <div className="bg-gradient-to-r from-cyan-600 to-slate-800 px-4 py-2.5 flex items-center gap-2 text-white">
+                  <Code className="w-4 h-4" />
+                  <span className="text-xs font-bold uppercase tracking-widest">Generar script</span>
+                </div>
+                <CardContent className="p-4 space-y-3">
+                  <p className="text-[11px] text-slate-500">Convierte el contenido en Markdown a un script que automatiza su procesamiento.</p>
+                  <div className="space-y-2">
+                    {LANGUAGES.map((lang) => (
+                      <button key={lang.id} onClick={() => setSelectedLanguage(lang.id)}
+                        className={cn("w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all border-2",
+                          selectedLanguage === lang.id ? "border-cyan-400 bg-cyan-50" : "border-slate-100 hover:border-slate-200")}>
+                        <span className={cn("flex-shrink-0", selectedLanguage === lang.id ? "text-cyan-600" : "text-slate-400")}>{lang.icon}</span>
+                        <span>
+                          <span className="block text-xs font-bold text-slate-800">{lang.name}</span>
+                          <span className="block text-[10px] text-slate-400">{lang.desc}</span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <Button onClick={() => transformToCode()} disabled={!markdown || isTransforming}
+                    className="w-full rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold uppercase tracking-widest text-[10px] h-10">
+                    {isTransforming ? <RefreshCw className="w-3.5 h-3.5 mr-2 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-2" />}
+                    Generar script
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Workspace */}
+            <div className="lg:col-span-8 flex flex-col gap-4">
+              <Card className="rounded-2xl border-slate-200 shadow-sm bg-white overflow-hidden flex-1 flex flex-col">
+                <CardHeader className="bg-slate-50 border-b border-slate-100 flex flex-row items-center justify-between px-5 py-3">
+                  <div className="flex items-center gap-1">
+                    {[
+                      { id: "edit", label: "Markdown", icon: Code },
+                      { id: "preview", label: "Vista previa", icon: Eye },
+                      { id: "code", label: LANGUAGES.find((l) => l.id === selectedLanguage)?.name || "Script", icon: Terminal },
+                    ].map((m) => (
+                      <button key={m.id} onClick={() => setViewMode(m.id as any)}
+                        className={cn("flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-all",
+                          viewMode === m.id ? "bg-white shadow-sm text-cyan-600 ring-1 ring-slate-200" : "text-slate-400 hover:text-slate-600")}>
+                        <m.icon className="w-3.5 h-3.5" /> {m.label}
+                      </button>
+                    ))}
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={copyToClipboard} disabled={viewMode === "code" ? !generatedCode : !markdown}
+                    className="h-8 px-3 rounded-lg text-slate-500 hover:text-cyan-600 font-bold text-[10px] uppercase">
+                    <Copy className="w-3.5 h-3.5 mr-1.5" /> Copiar
+                  </Button>
+                </CardHeader>
+                <CardContent className="p-0 flex-1 relative">
+                  {viewMode === "edit" ? (
+                    <Textarea value={markdown} onChange={(e) => setMarkdown(e.target.value)} placeholder="El contenido convertido aparecerá aquí…"
+                      className="w-full border-none focus-visible:ring-0 rounded-none p-6 font-mono text-xs leading-relaxed resize-none min-h-[420px]" />
+                  ) : viewMode === "code" ? (
+                    <Textarea value={generatedCode} onChange={(e) => setGeneratedCode(e.target.value)}
+                      placeholder={`Pulsa "Generar script" para crear el código en ${LANGUAGES.find((l) => l.id === selectedLanguage)?.name}…`}
+                      className="w-full border-none focus-visible:ring-0 rounded-none p-6 font-mono text-[11px] leading-relaxed resize-none min-h-[420px] bg-slate-900 text-emerald-400" />
+                  ) : (
+                    <div className="p-6 markdown-body prose prose-slate max-w-none prose-sm min-h-[420px] overflow-y-auto">
+                      {markdown ? <ReactMarkdown>{markdown}</ReactMarkdown> : (
+                        <div className="flex flex-col items-center justify-center h-[360px] text-slate-300 gap-4">
+                          <FileText className="w-14 h-14 opacity-30" />
+                          <p className="text-xs font-bold text-slate-400">Sube un documento para empezar</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Barra de acciones */}
+              <div className="flex flex-wrap items-center gap-2">
+                <Button onClick={downloadMarkdown} disabled={!markdown} variant="outline" className="rounded-xl text-[10px] font-bold uppercase h-10">
+                  <Download className="w-3.5 h-3.5 mr-2" /> Descargar .md
+                </Button>
+                <Button onClick={downloadCode} disabled={!markdown || isTransforming} variant="outline" className="rounded-xl text-[10px] font-bold uppercase h-10">
+                  <Download className="w-3.5 h-3.5 mr-2" /> Descargar .{LANGUAGES.find((l) => l.id === selectedLanguage)?.ext}
+                </Button>
+                <Button onClick={() => setShowSaveForm(!showSaveForm)} disabled={!markdown} className="rounded-xl bg-cyan-600 hover:bg-cyan-700 text-[10px] font-bold uppercase h-10">
+                  <Save className="w-3.5 h-3.5 mr-2" /> Guardar en biblioteca
+                </Button>
+                <Button onClick={clearWorkspace} disabled={!markdown && !file} variant="ghost" className="rounded-xl text-slate-400 hover:text-rose-600 text-[10px] font-bold uppercase h-10">
+                  <Trash2 className="w-3.5 h-3.5 mr-2" /> Limpiar
+                </Button>
+              </div>
+
+              {showSaveForm && (
+                <Card className="rounded-xl border-cyan-200 bg-cyan-50/40 p-4">
+                  <div className="flex items-center gap-2">
+                    <Input value={saveTitle} onChange={(e) => setSaveTitle(e.target.value)}
+                      placeholder={file ? file.name.split(".")[0] : "Nombre de la conversión"} className="rounded-lg bg-white" />
+                    <Button onClick={saveToLibrary} className="rounded-lg bg-cyan-600 hover:bg-cyan-700 text-[10px] font-bold uppercase h-10 px-4">Guardar</Button>
+                    <Button variant="ghost" onClick={() => setShowSaveForm(false)} className="h-10 px-2"><X className="w-4 h-4" /></Button>
+                  </div>
+                </Card>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ══════════ BIBLIOTECA ══════════ */}
+      {tab === "biblioteca" && (
+        <div className="space-y-5">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative flex-1 min-w-[200px]">
+              <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+              <Input placeholder="Buscar conversión..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="rounded-xl pl-9" />
+            </div>
+            <button onClick={() => setOnlyFavs(!onlyFavs)} className={cn("flex items-center gap-2 px-4 h-10 rounded-xl text-[10px] font-bold uppercase tracking-widest border-2 transition-all", onlyFavs ? "bg-amber-50 border-amber-300 text-amber-700" : "border-slate-200 text-slate-500 hover:border-amber-200")}>
+              <Star className={cn("w-4 h-4", onlyFavs && "fill-amber-400 text-amber-400")} /> Favoritos
+            </button>
+          </div>
+
+          {filtered.length === 0 ? (
+            <div className="rounded-2xl border-2 border-dashed border-slate-200 p-16 text-center">
+              <BookMarked className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+              <p className="text-slate-400 font-medium">{markdowns.length === 0 ? "Biblioteca vacía" : "Sin resultados"}</p>
+              <p className="text-sm text-slate-400 mt-1">{markdowns.length === 0 ? "Convierte un documento y guárdalo para tenerlo siempre a mano." : "Prueba a cambiar los filtros."}</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {filtered.map((m) => (
+                <Card key={m.id} className="rounded-xl border-slate-200 shadow-sm bg-white overflow-hidden hover:shadow-md transition-all">
+                  <div className="px-4 py-2.5 flex items-center justify-between border-b bg-cyan-50 text-cyan-700">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4" />
+                      <span className="text-xs font-bold uppercase">{m.category}</span>
+                    </div>
+                    <div className="flex items-center gap-0.5">
+                      <button onClick={() => toggleFav(m.id)} className="p-1.5 rounded-lg hover:bg-white/60" title="Favorito">
+                        <Star className={cn("w-3.5 h-3.5", m.isFavorite ? "fill-amber-400 text-amber-400" : "text-current opacity-50")} />
+                      </button>
+                      <button onClick={() => copyEntry(m.content, m.id)} className="p-1.5 rounded-lg hover:bg-white/60" title="Copiar">
+                        {copiedId === m.id ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      </button>
+                      <button onClick={() => { setEditingId(editingId === m.id ? null : m.id); setEditContent(m.content); }} className="p-1.5 rounded-lg hover:bg-white/60" title="Editar">
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => downloadEntry(m)} className="p-1.5 rounded-lg hover:bg-white/60" title="Descargar .md">
+                        <Download className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => loadIntoConverter(m)} className="p-1.5 rounded-lg hover:bg-white/60" title="Abrir en conversor">
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => deleteEntry(m.id)} className="p-1.5 rounded-lg hover:bg-white/60 text-rose-500" title="Eliminar">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                  <CardContent className="p-4 space-y-2">
+                    <h4 className="font-bold text-slate-900 text-sm">{m.title}</h4>
+                    {editingId === m.id ? (
+                      <div className="space-y-2">
+                        <Textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} className="rounded-lg min-h-[140px] font-mono text-xs" />
+                        <div className="flex gap-2">
+                          <Button size="sm" onClick={() => saveEdit(m.id)} className="rounded-lg text-[10px] font-bold uppercase bg-cyan-600 hover:bg-cyan-700"><Save className="w-3 h-3 mr-1" /> Guardar</Button>
+                          <Button size="sm" variant="outline" onClick={() => setEditingId(null)} className="rounded-lg text-[10px] font-bold uppercase">Cancelar</Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <pre className="whitespace-pre-wrap text-[11px] font-mono text-slate-600 bg-slate-50 rounded-lg border border-slate-100 p-3 max-h-36 overflow-auto">{m.content}</pre>
+                    )}
+                    <p className="text-[9px] text-slate-400">{new Date(m.createdAt).toLocaleString("es-ES")}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

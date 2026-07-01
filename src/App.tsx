@@ -1,3 +1,4 @@
+import React from "react";
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
@@ -8,15 +9,33 @@ import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./components/Dashboard";
 import { PromptGenerator } from "./components/PromptGenerator";
 import { AutomationHub } from "./components/AutomationHub";
+import { SkillBuilder } from "./components/SkillBuilder";
 import { MarkdownDownloader } from "./components/MarkdownDownloader";
+import { JsonBuilder } from "./components/JsonBuilder";
+import { TermsGate } from "./components/TermsGate";
 import { Settings } from "./components/Settings";
+import { PromptLog } from "./components/PromptLog";
+import { THEMES, Theme } from "./themes";
+import { installAuthInterceptor } from "./auth";
+import { initAIConfig } from "./aiConfig";
+import { toast } from "sonner";
 import { Toaster } from "@/components/ui/sonner";
 import { DB } from "./types";
 import axios from "axios";
 import { Menu, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+installAuthInterceptor();
+initAIConfig();
+
 export default function App() {
+  const [theme, setTheme] = React.useState<Theme>(() => (localStorage.getItem("APP_THEME") as Theme) || "light");
+
+  React.useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("APP_THEME", theme);
+  }, [theme]);
+
   const [activeTab, setActiveTab] = useState("dashboard");
   const [db, setDb] = useState<DB | null>(null);
   const [loading, setLoading] = useState(true);
@@ -33,7 +52,14 @@ export default function App() {
     const fetchDb = async () => {
       try {
         const res = await axios.get("/api/db");
-        setDb(res.data);
+        setDb({
+          prompts: res.data.prompts || [],
+          automations: res.data.automations || [],
+          skills: res.data.skills || [],
+          markdowns: res.data.markdowns || [],
+          jsons: res.data.jsons || [],
+          stats: res.data.stats || { totalTokens: 0, totalSavings: 0, filesProcessed: 0 },
+        });
       } catch (err) {
         console.error("Failed to fetch DB:", err);
       } finally {
@@ -47,8 +73,11 @@ export default function App() {
     setDb(newDb);
     try {
       await axios.post("/api/db", newDb);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to save DB:", err);
+      if (err?.response?.status === 401) {
+        toast.error("Sesión requerida", { description: "Desbloquea la consola en Configuración para guardar cambios." });
+      }
     }
   };
 
@@ -75,12 +104,15 @@ export default function App() {
   }
 
   return (
+    <TermsGate>
     <div className="flex h-screen bg-slate-50 text-slate-800 overflow-hidden font-sans relative">
       <Sidebar 
         activeTab={activeTab} 
         setActiveTab={handleTabChange} 
         isOpen={isSidebarOpen} 
-        onClose={() => setIsSidebarOpen(false)} 
+        onClose={() => setIsSidebarOpen(false)}
+        theme={theme}
+        setTheme={setTheme}
       />
       
       <main className="flex-1 overflow-auto relative">
@@ -101,16 +133,20 @@ export default function App() {
         </header>
 
         <div className="p-6 lg:p-10 max-w-7xl mx-auto">
-          {activeTab === "dashboard" && <Dashboard db={db!} />}
+          {activeTab === "dashboard" && <Dashboard db={db!} onNavigate={setActiveTab} />}
           {activeTab === "prompts" && <PromptGenerator db={db!} updateDb={updateDb} />}
           {activeTab === "automation" && <AutomationHub db={db!} updateDb={updateDb} />}
+          {activeTab === "skills" && <SkillBuilder db={db!} updateDb={updateDb} />}
           {activeTab === "markdown" && <MarkdownDownloader db={db!} updateDb={updateDb} />}
+          {activeTab === "json" && <JsonBuilder db={db!} updateDb={updateDb} />}
+          {activeTab === "promptlog" && <PromptLog />}
           {activeTab === "settings" && <Settings db={db!} updateDb={updateDb} />}
         </div>
       </main>
       
       <Toaster position="bottom-right" richColors />
     </div>
+    </TermsGate>
   );
 }
 

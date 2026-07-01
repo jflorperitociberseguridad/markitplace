@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { THEMES, Theme } from "../themes";
 import { 
   LayoutDashboard, 
   Terminal, 
@@ -7,22 +8,31 @@ import {
   History, 
   Settings,
   ChevronRight,
-  Activity
+  Activity,
+  Wrench,
+  Braces,
+  ExternalLink
 } from "lucide-react";
+import cibermedidaIcon from "../assets/cibermedida-icon.png";
 
 interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   isOpen: boolean;
   onClose: () => void;
+  theme: Theme;
+  setTheme: (t: Theme) => void;
 }
 
-export function Sidebar({ activeTab, setActiveTab, isOpen, onClose }: SidebarProps) {
+export function Sidebar({ activeTab, setActiveTab, isOpen, onClose, theme, setTheme }: SidebarProps) {
   const menuItems = [
     { id: "dashboard", label: "Panel de Control", icon: LayoutDashboard },
     { id: "prompts", label: "Lab de Prompts", icon: Terminal },
     { id: "automation", label: "Automatizaciones", icon: Zap },
+    { id: "skills", label: "Constructor de Skills", icon: Wrench },
+    { id: "json", label: "JSON Builder", icon: Braces },
     { id: "markdown", label: "MarkDown Pro", icon: FileText },
+    { id: "promptlog", label: "Registro de Actividad", icon: History },
     { id: "settings", label: "Configuración", icon: Settings },
   ];
 
@@ -70,6 +80,26 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, onClose }: SidebarPro
         </nav>
 
         <div className="p-4 mt-auto">
+          {/* Selector de tema */}
+          <div className="mb-3 bg-slate-800/50 rounded-xl p-2">
+            <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest mb-2 px-1">Tema</p>
+            <div className="grid grid-cols-2 gap-1">
+              {THEMES.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => setTheme(t.id)}
+                  className={cn(
+                    "flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[10px] font-bold transition-all",
+                    theme === t.id
+                      ? "bg-indigo-600 text-white"
+                      : "text-slate-400 hover:bg-slate-700 hover:text-white"
+                  )}
+                >
+                  <span>{t.emoji}</span> {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="bg-indigo-600/10 border border-indigo-500/20 rounded-xl p-4">
             <p className="text-slate-400 text-[10px] uppercase font-bold tracking-wider mb-2">Uso de Tokens</p>
             <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden mb-2">
@@ -78,7 +108,28 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, onClose }: SidebarPro
             <p className="text-white text-xs font-medium">124,500 <span className="text-slate-500 font-normal">/ 200k Tokens</span></p>
           </div>
           
-          <div className="mt-6 flex items-center justify-between px-2">
+          <div className="mt-4 pt-4 border-t border-slate-800/60 px-2">
+            <div className="flex items-center gap-2 mb-2">
+              <img src={cibermedidaIcon} alt="Cibermedida" className="w-7 h-7 flex-shrink-0" />
+              <div className="min-w-0">
+                <p className="text-white text-xs font-bold leading-tight truncate">Cibermedida</p>
+                <p className="text-slate-500 text-[9px] leading-tight">Proyecto de docencia.cibermedida.es</p>
+              </div>
+            </div>
+            <div className="flex flex-col gap-1">
+              <a href="https://cibermedida.es" target="_blank" rel="noreferrer"
+                className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-indigo-400 transition-colors">
+                cibermedida.es <ExternalLink className="w-2.5 h-2.5" />
+              </a>
+              <a href="https://docencia.cibermedida.es" target="_blank" rel="noreferrer"
+                className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-indigo-400 transition-colors">
+                docencia.cibermedida.es <ExternalLink className="w-2.5 h-2.5" />
+              </a>
+            </div>
+            <p className="text-slate-600 text-[9px] mt-2">Junio 2026</p>
+          </div>
+
+          <div className="mt-3 flex items-center justify-between px-2">
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <Activity className="w-4 h-4" />
               v2.4.0

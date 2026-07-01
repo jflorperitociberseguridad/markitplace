@@ -1,8 +1,23 @@
+# Secretos y configuración
+ecosystem.config.cjs
+.env
+.env.*
+!.env.example
+
+# Datos sensibles y logs
+data/
+logs/
+uploads/
+nohup.out
+
+# Dependencias y build
 node_modules/
 build/
 dist/
 coverage/
+
+# Sistema
 .DS_Store
 *.log
-.env*
-!.env.example
+*.backup
+server.ts.backup
