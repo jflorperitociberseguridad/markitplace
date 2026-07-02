@@ -214,6 +214,29 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
 
   useEffect(() => { loadHistory(); }, []);
 
+  // Agrupa el historial por día (Hoy / Ayer / fecha larga), conservando el orden reciente→antiguo
+  const groupHistoryByDay = (items: PromptVersion[]) => {
+    const startOfDay = (ts: number) => { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); };
+    const today = startOfDay(Date.now());
+    const oneDay = 86400000;
+    const labelFor = (ts: number) => {
+      const day = startOfDay(ts);
+      if (day === today) return "Hoy";
+      if (day === today - oneDay) return "Ayer";
+      return new Date(ts).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    };
+    const groups: { key: number; label: string; items: PromptVersion[] }[] = [];
+    for (const item of items) {
+      const key = startOfDay(item.at);
+      let g = groups.find((x) => x.key === key);
+      if (!g) { g = { key, label: labelFor(item.at), items: [] }; groups.push(g); }
+      g.items.push(item);
+    }
+    // Orden de los grupos: día más reciente primero
+    groups.sort((a, b) => b.key - a.key);
+    return groups;
+  };
+
   const pushHistory = async (content: string, label: string) => {
     if (!content.trim()) return;
     // Optimista: lo mostramos ya, y lo confirmamos con el servidor
@@ -888,25 +911,36 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
           </div>
           <h3 className="text-2xl font-extrabold tracking-tight text-slate-900">Historial de prompts</h3>
           <p className="text-sm text-slate-500 mb-4">Todos los prompts construidos en esta zona se guardan en el servidor y se ven desde cualquier navegador o dispositivo. Recupera cualquiera con un clic.</p>
-          <div className="space-y-2">
-            {history.map((v) => (
-              <Card key={v.id} className="rounded-xl border-slate-200 shadow-sm overflow-hidden">
-                <div className="flex items-center gap-3 px-4 py-3">
-                  <Layers className="w-4 h-4 text-slate-300 flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full uppercase">{v.label}</span>
-                      <span className="text-[10px] text-slate-400">{new Date(v.at).toLocaleTimeString("es-ES")}</span>
-                      <span className="text-[10px] text-slate-300">~{estimateTokens(v.content)} tokens</span>
-                    </div>
-                    <p className="text-xs text-slate-500 truncate mt-1">{v.content.slice(0, 120)}</p>
-                  </div>
-                  <Button variant="ghost" size="sm" onClick={() => { setGeneratedPrompt(v.content); window.scrollTo({ top: 0, behavior: "smooth" }); toast.success("Versión recuperada"); }}
-                    className="rounded-lg text-[10px] font-bold uppercase text-slate-500 hover:text-indigo-600 flex-shrink-0">
-                    <RefreshCcw className="w-3.5 h-3.5 mr-1" /> Recuperar
-                  </Button>
+          <div className="space-y-5">
+            {groupHistoryByDay(history).map((group) => (
+              <div key={group.key}>
+                <div className="flex items-center gap-3 mb-2">
+                  <span className="text-xs font-bold text-slate-700 capitalize">{group.label}</span>
+                  <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{group.items.length}</span>
+                  <div className="flex-1 h-px bg-slate-100" />
                 </div>
-              </Card>
+                <div className="space-y-2">
+                  {group.items.map((v) => (
+                    <Card key={v.id} className="rounded-xl border-slate-200 shadow-sm overflow-hidden">
+                      <div className="flex items-center gap-3 px-4 py-3">
+                        <Layers className="w-4 h-4 text-slate-300 flex-shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full uppercase">{v.label}</span>
+                            <span className="text-[10px] text-slate-400">{new Date(v.at).toLocaleTimeString("es-ES")}</span>
+                            <span className="text-[10px] text-slate-300">~{estimateTokens(v.content)} tokens</span>
+                          </div>
+                          <p className="text-xs text-slate-500 truncate mt-1">{v.content.slice(0, 120)}</p>
+                        </div>
+                        <Button variant="ghost" size="sm" onClick={() => { setGeneratedPrompt(v.content); window.scrollTo({ top: 0, behavior: "smooth" }); toast.success("Versión recuperada"); }}
+                          className="rounded-lg text-[10px] font-bold uppercase text-slate-500 hover:text-indigo-600 flex-shrink-0">
+                          <RefreshCcw className="w-3.5 h-3.5 mr-1" /> Recuperar
+                        </Button>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </div>
             ))}
             <div className="flex items-center gap-3">
               <button onClick={() => {

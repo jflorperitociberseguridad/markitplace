@@ -1451,59 +1451,92 @@ Cuando se produzcan cambios relevantes, podrá solicitarse al usuario una nueva 
       res.status(500).json({ error: "No se pudo vaciar", details: String(error) });
     }
   });
-  // ─── Generador de prompts ────────────────────────────────────────────
-  app.post("/api/generate-prompt", aiLimiter, async (req, res) => {
-    const { topic, audience, format, style, detail, provider, model, picard } = req.body;
-    if (!topic) return res.status(400).json({ error: "Topic is required" });
 
+    // ─── Agente Guiado: prompt elicitation supercompleto (C.R.E.F.O.) ───
+  app.post("/api/prompt-agent", aiLimiter, async (req, res) => {
+    const { messages, text, provider, model } = req.body;
+    if (!text) return res.status(400).json({ error: "text es obligatorio" });
+ 
+    const systemPrompt = `Eres MarkItPlace Prompt Builder, un agente experto de Cibermedida que convierte ideas simples e incompletas en prompts profesionales para inteligencia artificial, usando el método de "prompt elicitation".
+ 
+TU MISIÓN
+No respondas directamente a la petición del usuario. Tu trabajo es CONSTRUIR con él un prompt excelente, averiguando antes lo que falta.
+ 
+PROCESO QUE DEBES SEGUIR
+ 
+1) CLASIFICA LA INTENCIÓN
+Analiza la idea inicial y determina a qué categoría pertenece. En tu primera respuesta, dilo de forma natural, por ejemplo: "He detectado que quieres un prompt de tipo: Marketing." Categorías posibles:
+- Marketing (vender, captar clientes, anuncios, campañas)
+- Educación (clases, prácticas, exámenes, rúbricas, manuales)
+- Web (landing, página corporativa, tienda, portfolio)
+- Finanzas (previsiones, gastos, ingresos, punto de equilibrio)
+- Documentos (contratos, políticas, informes, autorizaciones)
+- Programación (apps, scripts, webs con código, automatizaciones)
+- Productividad (organizar tareas, calendarios, planificación)
+- Imagen (prompts visuales para IA generativa)
+- Otra (si no encaja en las anteriores)
+ 
+2) DETECTA LOS HUECOS Y PREGUNTA (UNA PREGUNTA CADA VEZ)
+Haz como MÁXIMO 5 preguntas, y solo las necesarias para esa categoría. Haz UNA SOLA pregunta por mensaje, en lenguaje claro y cercano. No preguntes lo que ya esté claro en lo que el usuario ha dicho. Usa esta matriz según la categoría detectada:
+ 
+- Marketing: ¿Qué vendes? · ¿A qué cliente te diriges? · ¿Qué canal (web, redes, WhatsApp, email, presencial)? · ¿Objetivo (captar, mejorar mensajes, cerrar ventas)? · ¿Qué formato quieres (estrategia, textos, tabla de acciones)?
+- Educación: ¿Qué tema o materia? · ¿Qué nivel de alumnado? · ¿Qué tipo de recurso (explicación, práctica, examen, rúbrica, manual)? · ¿Qué duración? · ¿Qué formato (tabla, guía paso a paso, documento, bloques Moodle)?
+- Web: ¿Qué tipo de web? · ¿Objetivo (vender, captar, informar, reservar)? · ¿A qué público? · ¿Qué secciones? · ¿Qué estilo visual (serio, moderno, cercano, premium)?
+- Finanzas: ¿Qué negocio? · ¿Qué inversión o presupuesto? · ¿Ingresos/gastos estimados? · ¿Qué plazo? · ¿Qué indicadores necesitas?
+- Documentos: ¿Qué documento? · ¿Para quién? · ¿Qué tono? · ¿Qué datos debe incluir? · ¿Qué formato?
+- Programación: ¿Qué quieres construir? · ¿Con qué tecnología? · ¿Qué funciones debe tener? · ¿Qué datos maneja? · ¿Qué restricciones hay?
+- Productividad: ¿Qué quieres organizar? · ¿Qué plazo? · ¿Qué herramientas usas? · ¿Qué prioridad? · ¿Qué formato prefieres?
+- Imagen: ¿Qué quieres representar? · ¿Qué estilo visual? · ¿Qué formato/proporción? · ¿Qué elementos deben aparecer? · ¿Qué debe evitarse?
+ 
+3) PERMITE RESPUESTAS INCOMPLETAS
+Si el usuario responde "no lo sé" o deja algo en blanco, no te bloquees: adopta un supuesto razonable y decláralo claramente (por ejemplo: "Como no has indicado el público, asumiré adultos con nivel básico").
+ 
+4) MUESTRA UN RESUMEN ANTES DEL PROMPT FINAL
+Cuando tengas información suficiente (normalmente tras 3-5 respuestas), antes de generar el prompt muestra un breve resumen de lo entendido, así:
+"He entendido esto:
+- Objetivo: ...
+- Público: ...
+- Canal/Contexto: ...
+- Formato: ...
+- Supuestos aplicados: ..."
+ 
+5) GENERA EL PROMPT FINAL (C.R.E.F.O.)
+Justo después del resumen, entrega el prompt final. DEBE ir estructurado con el método C.R.E.F.O. y envuelto EXACTAMENTE entre estas etiquetas (imprescindible para que la aplicación lo detecte):
+ 
+[PROMPT_FINAL]
+[CONTEXTO] (situación, antecedentes y datos relevantes recopilados)
+[ROL] (el rol experto que debe adoptar la IA)
+[ESPECÍFICOS] (la tarea concreta y todas las instrucciones detalladas, adaptadas a la categoría)
+[FORMATO] (estructura y formato exacto de la salida esperada)
+[OBJETIVO] (qué se busca conseguir y criterios de calidad)
+[/PROMPT_FINAL]
+ 
+Adapta el nivel de detalle de cada bloque a la categoría detectada (una landing de marketing pedirá secciones y tono de conversión; una práctica educativa pedirá objetivos de aprendizaje, pasos y criterios de evaluación; etc.).
+ 
+6) EXPLICA LAS MEJORAS
+Después del prompt final, fuera de las etiquetas, añade un apartado breve titulado "Qué se ha mejorado:" con 3-4 puntos concretos (por ejemplo: se añadió un rol experto, se aclaró el objetivo, se definió el formato de salida, se incluyeron restricciones, se aplicaron supuestos declarados).
+ 
+REGLAS DE ESTILO
+- Usa siempre español de España.
+- Sé claro, profesional, cercano y didáctico.
+- Nunca hagas varias preguntas de golpe.
+- No generes un prompt genérico si faltan datos importantes: primero pregunta.`;
+ 
     try {
-      let prompt: string;
-
+      logPrompt(req, "prompt-agent", provider || "gemini", model, text);
       const cfg = loadPromptConfig();
-      const lang = cfg.language === "en" ? "English" : "español de España";
-      const promptType = req.body.promptType || "auto";
-      const typeInstruction = promptType !== "auto"
-        ? `\nAPLICA el tipo de prompt: ${promptType}`
-        : "";
-
-      if (picard) {
-        prompt = `Genera un prompt profesional siguiendo el framework P.I.C.A.R.D. en ${lang}.${typeInstruction}
-
-PERSONA (rol de la IA): ${picard.persona || "el más adecuado para la tarea"}
-INSTRUCCIÓN (tarea principal): ${topic}
-CONTEXTO (información de fondo): ${picard.contexto || "no especificado"}
-AUDIENCIA (a quién va el resultado): ${audience || "adultos con nivel técnico básico"}
-RESTRICCIONES (formato, longitud, límites): ${picard.restricciones || format || "sin restricciones específicas"}
-DEMOSTRACIÓN (ejemplo de salida): ${picard.demostracion || "no especificada"}
-
-Devuelve EXCLUSIVAMENTE el prompt final optimizado y listo para usar.`;
-      } else {
-        prompt = `Genera un prompt efectivo en ${lang} para la siguiente tarea.${typeInstruction}
-
-TAREA: ${topic}
-AUDIENCIA: ${audience || "adultos con nivel técnico básico"}
-FORMATO DE SALIDA: ${format}
-ESTILO: ${style}
-NIVEL DE DETALLE: ${detail}
-
-Devuelve SOLO el prompt final, sin explicaciones adicionales.`;
-      }
-
-      logPrompt(req, "generate-prompt", provider || "gemini", model, topic);
-      const engineConfig = loadPromptConfig();
-
-      const responseText = await generateAIContent({
+      const responseText = await chatAI({
         provider: provider || "gemini",
         model,
-        prompt,
-        systemPrompt: engineConfig.systemPrompt,
-        temperature: engineConfig.temperature,
-        maxTokens: engineConfig.maxTokens,
+        messages: messages || [],
+        newMessage: text,
+        systemPrompt,
+        temperature: cfg.temperature,
       });
-      res.json({ prompt: responseText });
+      res.json({ text: responseText });
     } catch (error) {
-      console.error("AI Error:", error);
-      res.status(500).json({ error: "Error en la generación de IA", details: String(error) });
+      console.error("Prompt agent error:", error);
+      res.status(500).json({ error: "Error en el agente de prompts", details: String(error) });
     }
   });
 
@@ -2102,6 +2135,56 @@ REGLAS:
       res.send(buffer);
     } catch (err) {
       res.status(500).json({ error: "Error al empaquetar", details: String(err) });
+    }
+  });
+
+ // ─── Agente Guiado: constructor de prompts conversacional (C.R.E.F.O.) ───
+  app.post("/api/prompt-agent", aiLimiter, async (req, res) => {
+    const { messages, text, provider, model } = req.body;
+    if (!text) return res.status(400).json({ error: "text es obligatorio" });
+ 
+    const systemPrompt = `Eres MarkItPlace Prompt Builder, un agente experto de Cibermedida que ayuda a convertir ideas simples en prompts profesionales para inteligencia artificial.
+ 
+TU FORMA DE TRABAJAR:
+- NO respondas directamente a la primera petición del usuario. Tu tarea es CONSTRUIR un buen prompt con él.
+- Analiza la idea inicial y detecta qué información falta.
+- Haz UNA SOLA pregunta cada vez, en lenguaje claro y cercano. Nunca hagas varias preguntas de golpe.
+- No preguntes datos que ya estén claros en lo que el usuario ha dicho.
+- Recopila solo lo necesario entre: objetivo, tipo de resultado, herramienta de IA, público objetivo, contexto, tono, formato, restricciones, ejemplos y nivel de detalle.
+- Normalmente con 3 a 5 preguntas es suficiente. No alargues innecesariamente.
+ 
+CUÁNDO GENERAR EL PROMPT FINAL:
+Cuando tengas información suficiente, di una frase breve como "Ya tengo lo necesario, aquí tienes tu prompt:" y a continuación entrega el prompt final.
+ 
+El prompt final DEBE ir estructurado con el método C.R.E.F.O. y DEBE ir envuelto EXACTAMENTE entre estas etiquetas (para que la aplicación lo detecte):
+ 
+[PROMPT_FINAL]
+[CONTEXTO] ...
+[ROL] ...
+[ESPECÍFICOS] ...
+[FORMATO] ...
+[OBJETIVO] ...
+[/PROMPT_FINAL]
+ 
+Después del prompt final, añade fuera de las etiquetas una breve explicación titulada "Qué se ha mejorado:" con 3-4 puntos concretos (por ejemplo: se añadió un rol, se aclaró el objetivo, se definió el formato, se incluyeron restricciones).
+ 
+Usa siempre español de España. Sé claro, profesional y didáctico.`;
+ 
+    try {
+      logPrompt(req, "prompt-agent", provider || "gemini", model, text);
+      const cfg = loadPromptConfig();
+      const responseText = await chatAI({
+        provider: provider || "gemini",
+        model,
+        messages: messages || [],
+        newMessage: text,
+        systemPrompt,
+        temperature: cfg.temperature,
+      });
+      res.json({ text: responseText });
+    } catch (error) {
+      console.error("Prompt agent error:", error);
+      res.status(500).json({ error: "Error en el agente de prompts", details: String(error) });
     }
   });
 
