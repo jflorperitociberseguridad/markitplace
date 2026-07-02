@@ -245,7 +245,8 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
     const daysCount = lastDay.getDate();
-    const startPadding = firstDay.getDay();
+    // CORRECCIÓN: sincronizar con array [L, M, X, J, V, S, D]
+    const startPadding = firstDay.getDay() === 0 ? 6 : firstDay.getDay() - 1;
     return { daysCount, startPadding, year, month };
   };
 
@@ -602,8 +603,12 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
 
             {/* Contenido por modo */}
             {mode === "agent" ? (
-              // Agente Guiado
-              <PromptAgent db={db} updateDb={updateDb} />
+              // PromptAgent: pasa setGeneratedPrompt para que lance resultado directamente al panel compilado
+              <PromptAgent db={db} updateDb={updateDb} onPromptGenerated={(prompt) => {
+                setGeneratedPrompt(prompt);
+                pushHistory(prompt, "Agente Guiado");
+                clearTools();
+              }} />
             ) : mode === "simple" ? (
               // Modo simple
               <div className="space-y-2">
@@ -964,7 +969,7 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
         </Card>
       </div>
 
-      {/* Comparador A/B (igual que antes) */}
+      {/* Comparador A/B */}
       {compareMode && (variantA || variantB || comparing) && (
         <div className="pt-4">
           <div className="flex items-center justify-between mb-1">
@@ -1010,14 +1015,14 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
         </div>
       )}
 
-      {/* Historial (igual que antes) */}
+      {/* Historial */}
       {history.length > 0 && (
         <div className="pt-4">
           <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
             <History className="w-4 h-4 text-indigo-500" /> Historial
           </div>
           <h3 className="text-2xl font-extrabold tracking-tight text-slate-900">Historial de prompts</h3>
-          <p className="text-sm text-slate-500 mb-4">Selecciona un día en el calendario para ver los prompts de ese día. Todos los prompts se guardan en el servidor y son accesibles desde cualquier dispositivo.</p>
+          <p className="text-sm text-slate-500 mb-4">Selecciona un día en el calendario para ver los prompts de ese día.</p>
           
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div>
@@ -1100,13 +1105,13 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
         </div>
       )}
 
-      {/* Framework C.R.E.F.O. (igual que antes) */}
+      {/* Framework C.R.E.F.O. */}
       <div className="pt-4">
         <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
           <Sparkles className="w-4 h-4 text-indigo-500" /> Framework
         </div>
         <h3 className="text-2xl font-extrabold tracking-tight text-slate-900">Método C.R.E.F.O.</h3>
-        <p className="text-sm text-slate-500 mb-5">Una forma sencilla de estructurar cualquier prompt en 5 bloques. Activa el "Constructor C.R.E.F.O." arriba para construirlo paso a paso.</p>
+        <p className="text-sm text-slate-500 mb-5">Una forma sencilla de estructurar cualquier prompt en 5 bloques.</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
           {[
             { key: "C", label: "Contexto", desc: "La situación de partida: quién eres, tu sector y tu punto actual.", ej: "PYME de calzado artesanal, 8 años, venta en tienda física." },
@@ -1135,13 +1140,13 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
         </button>
       </div>
 
-      {/* Guía de Técnicas (igual que antes) */}
+      {/* Guía de Técnicas */}
       <div className="pt-4">
         <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
           <BookOpen className="w-4 h-4 text-indigo-500" /> Guía de Técnicas
         </div>
         <h3 className="text-2xl font-extrabold tracking-tight text-slate-900">18 técnicas de prompt</h3>
-        <p className="text-sm text-slate-500 mb-6">Pulsa en cualquier técnica para ver su explicación completa, ejemplos y consejos. Usa "Aplicar esta técnica" para generar tu prompt con ese enfoque.</p>
+        <p className="text-sm text-slate-500 mb-6">Pulsa en cualquier técnica para ver su explicación completa, ejemplos y consejos.</p>
 
         <div className="space-y-8">
           {(Object.keys(PROMPT_FAMILIES) as PromptTechnique["family"][]).map((familyKey) => {
