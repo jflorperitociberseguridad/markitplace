@@ -8,7 +8,6 @@ import { useState, useEffect } from "react";
 import { Sidebar } from "./components/Sidebar";
 import { Dashboard } from "./components/Dashboard";
 import { PromptGenerator } from "./components/PromptGenerator";
-import { PromptAgent } from "./components/PromptAgent";
 import { AutomationHub } from "./components/AutomationHub";
 import { SkillBuilder } from "./components/SkillBuilder";
 import { MarkdownDownloader } from "./components/MarkdownDownloader";
@@ -136,7 +135,6 @@ export default function App() {
         <div className="p-6 lg:p-10 max-w-7xl mx-auto">
           {activeTab === "dashboard" && <Dashboard db={db!} onNavigate={setActiveTab} />}
           {activeTab === "prompts" && <PromptGenerator db={db!} updateDb={updateDb} />}
-          {activeTab === "agent" && <PromptAgent db={db!} updateDb={updateDb} />}
           {activeTab === "automation" && <AutomationHub db={db!} updateDb={updateDb} />}
           {activeTab === "skills" && <SkillBuilder db={db!} updateDb={updateDb} />}
           {activeTab === "markdown" && <MarkdownDownloader db={db!} updateDb={updateDb} />}

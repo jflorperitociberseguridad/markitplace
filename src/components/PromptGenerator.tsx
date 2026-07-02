@@ -40,11 +40,15 @@ import {
   FileStack,
   FileDown,
   Boxes,
-  Printer
+  Printer,
+  ChevronLeft,
+  ChevronRight,
+  Calendar
 } from "lucide-react";
 import { DB, SavedPrompt } from "../types";
 import { getAIConfig } from "../aiConfig";
 import { PROMPT_TECHNIQUES, PROMPT_FAMILIES, PromptTechnique } from "../data/promptTechniques";
+import { PromptAgent } from "./PromptAgent";
 import { toast } from "sonner";
 import axios from "axios";
 import { cn } from "@/lib/utils";
@@ -55,6 +59,9 @@ interface PromptGeneratorProps {
 }
 
 export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
+  // ── Modo: simple, C.R.E.F.O. o Agente ──
+  const [mode, setMode] = useState<"simple" | "crefo" | "agent">("simple");
+
   const [audience, setAudience] = useState("");
   const [format, setFormat] = useState("text");
   const [style, setStyle] = useState("professional");
@@ -67,14 +74,12 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
   const [expandedTechnique, setExpandedTechnique] = useState<string | null>(null);
 
   // ── Constructor C.R.E.F.O. ──
-  const [crefoMode, setCrefoMode] = useState(false);
   const [crefoContexto, setCrefoContexto] = useState("");
   const [crefoRol, setCrefoRol] = useState("");
   const [crefoEspecificos, setCrefoEspecificos] = useState("");
   const [crefoFormato, setCrefoFormato] = useState("");
   const [crefoObjetivo, setCrefoObjetivo] = useState("");
 
-  // Ensambla los 5 bloques C.R.E.F.O. en un prompt estructurado con las etiquetas del método
   const buildCrefoText = () => {
     const parts: string[] = [];
     if (crefoContexto.trim()) parts.push(`[CONTEXTO] ${crefoContexto.trim()}`);
@@ -87,7 +92,7 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
 
   const crefoFilled = [crefoContexto, crefoRol, crefoEspecificos, crefoFormato, crefoObjetivo].filter((v) => v.trim()).length;
 
-  // ── Herramientas sobre el prompt generado: evaluar / mejorar / ejecutar / explicar ──
+  // ── Herramientas sobre el prompt generado ──
   const [toolAction, setToolAction] = useState<string>("");
   const [toolLoading, setToolLoading] = useState<string>("");
   const [evalResult, setEvalResult] = useState<any>(null);
@@ -108,7 +113,6 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
     if (!generatedPrompt) return;
     setToolLoading(action);
     setToolAction(action);
-    // Limpiar resultados previos del resto de herramientas para no confundir
     if (action === "evaluate") { setRefineResult(""); setRunResult(""); setExplainResult(null); }
     if (action === "refine") { setEvalResult(null); setRunResult(""); setExplainResult(null); }
     if (action === "run") { setEvalResult(null); setRefineResult(""); setExplainResult(null); }
@@ -140,7 +144,7 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
     setToolAction(""); setEvalResult(null); setRefineResult(""); setRunResult(""); setExplainResult(null);
   };
 
-  // ── Plantillas C.R.E.F.O. por sector (cargables) ──
+  // ── Plantillas C.R.E.F.O. ──
   const CREFO_TEMPLATES = [
     {
       id: "calzado",
@@ -185,7 +189,7 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
   ];
 
   const loadTemplate = (t: typeof CREFO_TEMPLATES[number]) => {
-    setCrefoMode(true);
+    setMode("crefo");
     setCrefoContexto(t.contexto);
     setCrefoRol(t.rol);
     setCrefoEspecificos(t.especificos);
@@ -195,57 +199,149 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
     toast.success(`Plantilla "${t.name}" cargada en C.R.E.F.O.`);
   };
 
-  // ── Estimación de tokens y coste aproximado ──
-  // Aproximación: ~4 caracteres por token. Precios orientativos por 1K tokens de salida.
+  // ── Estimación de tokens ──
   const estimateTokens = (text: string) => Math.max(1, Math.round(text.length / 4));
   const COST_PER_1K: Record<string, number> = { openai: 0.01, gemini: 0.0, claude: 0.015 };
   const promptTokens = generatedPrompt ? estimateTokens(generatedPrompt) : 0;
 
-  // ── Historial de prompts COMPARTIDO (servidor, visible desde cualquier navegador) ──
+  // ── Historial de prompts ──
   interface PromptVersion { id: string; content: string; label: string; at: number; }
   const [history, setHistory] = useState<PromptVersion[]>([]);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [calendarMonth, setCalendarMonth] = useState(new Date());
 
   const loadHistory = async () => {
     try {
       const res = await axios.get("/api/prompt-history");
       setHistory(Array.isArray(res.data.history) ? res.data.history : []);
-    } catch { /* si el endpoint aún no existe en el servidor, el historial queda vacío sin error */ }
+    } catch { }
   };
 
   useEffect(() => { loadHistory(); }, []);
 
-  // Agrupa el historial por día (Hoy / Ayer / fecha larga), conservando el orden reciente→antiguo
-  const groupHistoryByDay = (items: PromptVersion[]) => {
-    const startOfDay = (ts: number) => { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); };
-    const today = startOfDay(Date.now());
-    const oneDay = 86400000;
-    const labelFor = (ts: number) => {
-      const day = startOfDay(ts);
-      if (day === today) return "Hoy";
-      if (day === today - oneDay) return "Ayer";
-      return new Date(ts).toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-    };
-    const groups: { key: number; label: string; items: PromptVersion[] }[] = [];
-    for (const item of items) {
-      const key = startOfDay(item.at);
-      let g = groups.find((x) => x.key === key);
-      if (!g) { g = { key, label: labelFor(item.at), items: [] }; groups.push(g); }
-      g.items.push(item);
-    }
-    // Orden de los grupos: día más reciente primero
-    groups.sort((a, b) => b.key - a.key);
-    return groups;
+  const daysWithPrompts = (() => {
+    const days = new Set<string>();
+    history.forEach((h) => {
+      const d = new Date(h.at);
+      const key = d.toISOString().split('T')[0];
+      days.add(key);
+    });
+    return days;
+  })();
+
+  const getPromptsForDay = (date: Date | null) => {
+    if (!date) return [];
+    const dayStart = new Date(date);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(date);
+    dayEnd.setHours(23, 59, 59, 999);
+    return history.filter((h) => h.at >= dayStart.getTime() && h.at <= dayEnd.getTime()).sort((a, b) => b.at - a.at);
+  };
+
+  const getDaysInMonth = (d: Date) => {
+    const year = d.getFullYear();
+    const month = d.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysCount = lastDay.getDate();
+    const startPadding = firstDay.getDay();
+    return { daysCount, startPadding, year, month };
+  };
+
+  const isSameDay = (d1: Date | null, d2: Date) => {
+    if (!d1) return false;
+    return d1.toISOString().split('T')[0] === d2.toISOString().split('T')[0];
+  };
+
+  const isToday = (d: Date) => isSameDay(new Date(), d);
+  const isInDaysWithPrompts = (d: Date) => daysWithPrompts.has(d.toISOString().split('T')[0]);
+
+  const Calendar = () => {
+    const { daysCount, startPadding, year, month } = getDaysInMonth(calendarMonth);
+    const days = [];
+    
+    for (let i = 0; i < startPadding; i++) days.push(null);
+    for (let i = 1; i <= daysCount; i++) days.push(new Date(year, month, i));
+
+    return (
+      <Card className="rounded-xl border-slate-200 shadow-sm bg-white p-4 w-full">
+        <div className="flex items-center justify-between mb-4">
+          <button 
+            onClick={() => setCalendarMonth(new Date(year, month - 1))}
+            className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-700"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <div className="text-sm font-bold text-slate-700">
+            {calendarMonth.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' })}
+          </div>
+          <button 
+            onClick={() => setCalendarMonth(new Date(year, month + 1))}
+            className="p-1 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-700"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="grid grid-cols-7 gap-1 mb-2">
+          {['L', 'M', 'X', 'J', 'V', 'S', 'D'].map((day, i) => (
+            <div key={i} className="text-center text-[9px] font-bold text-slate-400 uppercase py-1">
+              {day}
+            </div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-7 gap-1">
+          {days.map((day, i) => {
+            if (!day) return <div key={`empty-${i}`} />;
+            const hasPrompts = isInDaysWithPrompts(day);
+            const isSelected = isSameDay(selectedDate, day);
+            const isTodayDate = isToday(day);
+            return (
+              <button
+                key={day.toISOString()}
+                onClick={() => { setSelectedDate(day); }}
+                className={cn(
+                  "aspect-square flex items-center justify-center text-xs font-bold rounded-lg transition-all relative",
+                  isSelected ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-50",
+                  isTodayDate && !isSelected && "border-2 border-indigo-300",
+                  hasPrompts && "font-extrabold",
+                  hasPrompts && !isSelected && "text-indigo-600 bg-indigo-50"
+                )}
+                title={hasPrompts ? `${getPromptsForDay(day).length} prompts` : "Sin prompts"}
+              >
+                {day.getDate()}
+                {hasPrompts && <div className="absolute bottom-0.5 w-1 h-1 bg-current rounded-full" />}
+              </button>
+            );
+          })}
+        </div>
+
+        {selectedDate && (
+          <div className="mt-4 p-3 bg-indigo-50 rounded-lg border border-indigo-200">
+            <div className="flex items-center justify-between">
+              <div className="text-xs font-bold text-indigo-700">
+                {selectedDate.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+              </div>
+              <span className="text-xs font-bold text-indigo-600 bg-white px-2 py-0.5 rounded">
+                {getPromptsForDay(selectedDate).length} prompts
+              </span>
+            </div>
+          </div>
+        )}
+      </Card>
+    );
   };
 
   const pushHistory = async (content: string, label: string) => {
     if (!content.trim()) return;
-    // Optimista: lo mostramos ya, y lo confirmamos con el servidor
     const optimistic = { id: "tmp-" + Math.random().toString(36).slice(2, 9), content, label, at: Date.now() };
     setHistory((prev) => [optimistic, ...prev].slice(0, 500));
     try {
       await axios.post("/api/prompt-history", { content, label });
-      loadHistory(); // recargar para tener el id real del servidor
-    } catch { /* si falla el guardado en servidor, al menos queda en pantalla esta sesión */ }
+      loadHistory();
+    } catch { }
   };
 
   const clearHistory = async () => {
@@ -253,27 +349,27 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
     try {
       await axios.delete("/api/prompt-history");
       setHistory([]);
+      setSelectedDate(null);
       toast.success("Historial vaciado");
     } catch (e: any) {
       toast.error("No se pudo vaciar", { description: "Puede requerir desbloquear la consola en Configuración." });
     }
   };
 
-  // ── Comparador de prompts (variante A/B) ──
+  // ── Comparador A/B ──
   const [compareMode, setCompareMode] = useState(false);
   const [variantA, setVariantA] = useState("");
   const [variantB, setVariantB] = useState("");
   const [comparing, setComparing] = useState(false);
 
   const generateComparison = async () => {
-    const effectiveTopic = crefoMode ? buildCrefoText() : topic;
+    const effectiveTopic = mode === "crefo" ? buildCrefoText() : topic;
     if (!effectiveTopic.trim()) { toast.error("Introduce un objetivo o rellena C.R.E.F.O. primero"); return; }
     setComparing(true);
     setVariantA(""); setVariantB("");
     try {
       const { provider, model, apiKey } = getAIConfig();
       const base = { audience, format, style, detail, apiKey, provider, model };
-      // Variante A: sin técnica específica (auto). Variante B: con la técnica seleccionada (o few-shot por defecto).
       const techB = selectedTechnique || "few-shot";
       const [resA, resB] = await Promise.all([
         axios.post("/api/generate-prompt", { ...base, topic: effectiveTopic, promptType: "auto" }),
@@ -289,7 +385,6 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
     }
   };
 
-  // ── Exportar prompt + evaluación a Word (.doc) y PDF ──
   const buildExportHTML = () => {
     const esc = (s: string) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const fecha = new Date().toLocaleString("es-ES");
@@ -314,7 +409,7 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
         <div style="border-bottom:3px solid #0EA5A8;padding-bottom:8px;margin-bottom:16px;">
           <div style="font-size:11px;color:#6D5BD0;font-weight:bold;text-transform:uppercase;">Cibermedida · MarkItPlace</div>
           <h1 style="color:#1B2A4A;margin:4px 0;">Prompt generado</h1>
-          <div style="font-size:11px;color:#888;">${fecha}${selectedTechnique ? " · Técnica: " + esc(selectedTechnique) : ""}${crefoMode ? " · Framework C.R.E.F.O." : ""}</div>
+          <div style="font-size:11px;color:#888;">${fecha}${selectedTechnique ? " · Técnica: " + esc(selectedTechnique) : ""}${mode === "crefo" ? " · Framework C.R.E.F.O." : ""}</div>
         </div>
         <h2 style="color:#1B2A4A;">Prompt</h2>
         <pre style="white-space:pre-wrap;font-family:Consolas,monospace;font-size:13px;background:#f4f7f9;border:1px solid #e2e8f0;border-radius:6px;padding:12px;">${esc(generatedPrompt)}</pre>
@@ -343,7 +438,6 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
     toast.success('Abriendo impresión: elige "Guardar como PDF"');
   };
 
-  // ── Modo multimodelo: lanzar el mismo prompt a OpenAI, Gemini y Claude ──
   const [multiResults, setMultiResults] = useState<Record<string, string>>({});
   const [multiLoading, setMultiLoading] = useState(false);
 
@@ -372,9 +466,9 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
   };
 
   const generatePrompt = async () => {
-    const effectiveTopic = crefoMode ? buildCrefoText() : topic;
+    const effectiveTopic = mode === "crefo" ? buildCrefoText() : topic;
     if (!effectiveTopic.trim()) {
-      toast.error(crefoMode ? "Rellena al menos un bloque C.R.E.F.O." : "Por favor, introduce un tema o tarea para el prompt");
+      toast.error(mode === "crefo" ? "Rellena al menos un bloque C.R.E.F.O." : "Por favor, introduce un tema o tarea para el prompt");
       return;
     }
 
@@ -391,14 +485,14 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
         provider,
         model,
         promptType: selectedTechnique || "auto",
-        framework: crefoMode ? "crefo" : undefined,
+        framework: mode === "crefo" ? "crefo" : undefined,
       };
 
       const response = await axios.post("/api/generate-prompt", payload);
       const result = response.data.prompt || "Generation failure";
       setGeneratedPrompt(result);
       clearTools();
-      pushHistory(result, crefoMode ? "C.R.E.F.O." + (selectedTechnique ? ` + ${selectedTechnique}` : "") : (selectedTechnique || "simple"));
+      pushHistory(result, mode === "crefo" ? "C.R.E.F.O." + (selectedTechnique ? ` + ${selectedTechnique}` : "") : (selectedTechnique || "simple"));
       
       const newDb = { ...db };
       newDb.stats.totalTokens += result.length / 4;
@@ -464,11 +558,12 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
       </header>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Configuration */}
+        {/* Configuration Panel */}
         <Card className="rounded-xl border-slate-200 shadow-sm bg-white overflow-hidden flex flex-col">
           <CardHeader className="bg-slate-50/50 border-b border-slate-100 flex flex-row items-center justify-between">
             <CardTitle className="text-sm font-bold flex items-center gap-2">
-              <Settings2 className="w-4 h-4 text-indigo-500" /> Matriz de Parámetros
+              <Settings2 className="w-4 h-4 text-indigo-500" /> 
+              {mode === "agent" ? "Agente Guiado" : "Matriz de Parámetros"}
             </CardTitle>
             <Button 
                 variant="ghost" 
@@ -480,25 +575,37 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
             </Button>
           </CardHeader>
           <CardContent className="space-y-6 pt-6 flex-1">
-            {/* Conmutador de modo: Simple vs C.R.E.F.O. */}
-            <div className="flex items-center gap-2 p-1 bg-slate-100 rounded-xl">
+            {/* Toggle de 3 modos */}
+            <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-xl">
               <button
-                onClick={() => setCrefoMode(false)}
+                onClick={() => setMode("simple")}
                 className={cn("flex-1 text-[10px] font-bold uppercase tracking-widest py-2 rounded-lg transition-all",
-                  !crefoMode ? "bg-white text-indigo-600 shadow-sm" : "text-slate-400 hover:text-slate-600")}
+                  mode === "simple" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-400 hover:text-slate-600")}
               >
                 Modo simple
               </button>
               <button
-                onClick={() => setCrefoMode(true)}
+                onClick={() => setMode("crefo")}
                 className={cn("flex-1 text-[10px] font-bold uppercase tracking-widest py-2 rounded-lg transition-all flex items-center justify-center gap-1.5",
-                  crefoMode ? "bg-white text-indigo-600 shadow-sm" : "text-slate-400 hover:text-slate-600")}
+                  mode === "crefo" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-400 hover:text-slate-600")}
               >
-                <Sparkles className="w-3.5 h-3.5" /> Constructor C.R.E.F.O.
+                <Sparkles className="w-3.5 h-3.5" /> C.R.E.F.O.
+              </button>
+              <button
+                onClick={() => setMode("agent")}
+                className={cn("flex-1 text-[10px] font-bold uppercase tracking-widest py-2 rounded-lg transition-all flex items-center justify-center gap-1.5",
+                  mode === "agent" ? "bg-white text-indigo-600 shadow-sm" : "text-slate-400 hover:text-slate-600")}
+              >
+                <Sparkles className="w-3.5 h-3.5" /> Agente
               </button>
             </div>
 
-            {!crefoMode ? (
+            {/* Contenido por modo */}
+            {mode === "agent" ? (
+              // Agente Guiado
+              <PromptAgent db={db} updateDb={updateDb} />
+            ) : mode === "simple" ? (
+              // Modo simple
               <div className="space-y-2">
                 <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Objetivo de la Misión</Label>
                 <Textarea 
@@ -509,6 +616,7 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
                 />
               </div>
             ) : (
+              // Modo C.R.E.F.O.
               <div className="space-y-3">
                 <div>
                   <div className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">
@@ -558,86 +666,91 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Público Objetivo</Label>
-                <Input 
-                  placeholder="ej. Científicos de Datos" 
-                  className="rounded-lg border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
-                  value={audience}
-                  onChange={(e) => setAudience(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Firma de Salida</Label>
-                <Select value={format} onValueChange={setFormat}>
-                  <SelectTrigger className="rounded-lg border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent side="bottom" sideOffset={4} align="start" alignItemWithTrigger={false} className="rounded-xl border-slate-200 bg-white">
-                    <SelectItem value="text">TEXTO PLANO</SelectItem>
-                    <SelectItem value="json">ESQUEMA JSON</SelectItem>
-                    <SelectItem value="steps">PASOS PRECEDURALES</SelectItem>
-                    <SelectItem value="markdown">TABLAS MARKDOWN</SelectItem>
-                    <SelectItem value="python">LÓGICA PYTHON</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+            {/* Parámetros generales (visibles en todos los modos excepto agent) */}
+            {mode !== "agent" && (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Público Objetivo</Label>
+                    <Input 
+                      placeholder="ej. Científicos de Datos" 
+                      className="rounded-lg border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm"
+                      value={audience}
+                      onChange={(e) => setAudience(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Firma de Salida</Label>
+                    <Select value={format} onValueChange={setFormat}>
+                      <SelectTrigger className="rounded-lg border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent side="bottom" sideOffset={4} align="start" alignItemWithTrigger={false} className="rounded-xl border-slate-200 bg-white">
+                        <SelectItem value="text">TEXTO PLANO</SelectItem>
+                        <SelectItem value="json">ESQUEMA JSON</SelectItem>
+                        <SelectItem value="steps">PASOS PRECEDURALES</SelectItem>
+                        <SelectItem value="markdown">TABLAS MARKDOWN</SelectItem>
+                        <SelectItem value="python">LÓGICA PYTHON</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Arquetipo de Escritura</Label>
-                <Select value={style} onValueChange={setStyle}>
-                  <SelectTrigger className="rounded-lg border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent side="bottom" sideOffset={4} align="start" alignItemWithTrigger={false} className="rounded-xl border-slate-200 bg-white">
-                    <SelectItem value="professional">PROFESIONAL</SelectItem>
-                    <SelectItem value="creative">CREATIVO</SelectItem>
-                    <SelectItem value="technical">TÉCNICO</SelectItem>
-                    <SelectItem value="minimal">MINIMALISTA</SelectItem>
-                    <SelectItem value="academic">ACADÉMICO</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Nivel de Densidad</Label>
-                <Select value={detail} onValueChange={setDetail}>
-                  <SelectTrigger className="rounded-lg border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent side="bottom" sideOffset={4} align="start" alignItemWithTrigger={false} className="rounded-xl border-slate-200 bg-white">
-                    <SelectItem value="brief">CONCISO</SelectItem>
-                    <SelectItem value="medium">EQUILIBRADO</SelectItem>
-                    <SelectItem value="extensive">EXHAUSTIVO</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Arquetipo de Escritura</Label>
+                    <Select value={style} onValueChange={setStyle}>
+                      <SelectTrigger className="rounded-lg border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent side="bottom" sideOffset={4} align="start" alignItemWithTrigger={false} className="rounded-xl border-slate-200 bg-white">
+                        <SelectItem value="professional">PROFESIONAL</SelectItem>
+                        <SelectItem value="creative">CREATIVO</SelectItem>
+                        <SelectItem value="technical">TÉCNICO</SelectItem>
+                        <SelectItem value="minimal">MINIMALISTA</SelectItem>
+                        <SelectItem value="academic">ACADÉMICO</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Nivel de Densidad</Label>
+                    <Select value={detail} onValueChange={setDetail}>
+                      <SelectTrigger className="rounded-lg border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent side="bottom" sideOffset={4} align="start" alignItemWithTrigger={false} className="rounded-xl border-slate-200 bg-white">
+                        <SelectItem value="brief">CONCISO</SelectItem>
+                        <SelectItem value="medium">EQUILIBRADO</SelectItem>
+                        <SelectItem value="extensive">EXHAUSTIVO</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
 
-            <Button 
-              className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase tracking-widest text-xs h-12 transition-all shadow-lg shadow-indigo-200 group mt-4"
-              onClick={generatePrompt}
-              disabled={loading}
-            >
-              {loading ? <RefreshCcw className="w-4 h-4 mr-2 animate-spin" /> : <Wand2 className="w-4 h-4 mr-2 group-hover:rotate-12 transition-transform" />}
-              {loading ? "Construyendo directiva..." : "Generar Prompt"}
-            </Button>
+                <Button 
+                  className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase tracking-widest text-xs h-12 transition-all shadow-lg shadow-indigo-200 group mt-4"
+                  onClick={generatePrompt}
+                  disabled={loading}
+                >
+                  {loading ? <RefreshCcw className="w-4 h-4 mr-2 animate-spin" /> : <Wand2 className="w-4 h-4 mr-2 group-hover:rotate-12 transition-transform" />}
+                  {loading ? "Construyendo directiva..." : "Generar Prompt"}
+                </Button>
 
-            <Button
-              variant="outline"
-              className="w-full rounded-xl border-2 border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-indigo-700 font-bold uppercase tracking-widest text-xs h-11"
-              onClick={() => { setCompareMode(true); generateComparison(); }}
-              disabled={comparing}
-            >
-              {comparing ? <RefreshCcw className="w-4 h-4 mr-2 animate-spin" /> : <Columns2 className="w-4 h-4 mr-2" />}
-              {comparing ? "Comparando..." : "Comparar 2 variantes (A/B)"}
-            </Button>
+                <Button
+                  variant="outline"
+                  className="w-full rounded-xl border-2 border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-indigo-700 font-bold uppercase tracking-widest text-xs h-11"
+                  onClick={() => { setCompareMode(true); generateComparison(); }}
+                  disabled={comparing}
+                >
+                  {comparing ? <RefreshCcw className="w-4 h-4 mr-2 animate-spin" /> : <Columns2 className="w-4 h-4 mr-2" />}
+                  {comparing ? "Comparando..." : "Comparar 2 variantes (A/B)"}
+                </Button>
+              </>
+            )}
           </CardContent>
         </Card>
 
-        {/* Output */}
+        {/* Output Panel */}
         <Card className="rounded-xl border-slate-200 shadow-sm bg-white overflow-hidden flex flex-col relative">
           <CardHeader className="bg-slate-50/50 border-b border-slate-100 flex flex-row items-center justify-between">
             <CardTitle className="text-sm font-bold flex items-center gap-2">
@@ -684,7 +797,7 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
                   </Button>
                 </div>
 
-                {/* ── Herramientas sobre el prompt ── */}
+                {/* Herramientas */}
                 <div className="mt-5 pt-5 border-t border-slate-100">
                   <div className="flex items-center justify-between mb-3">
                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Analiza y mejora este prompt</span>
@@ -710,7 +823,6 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
                     ))}
                   </div>
 
-                  {/* Exportar y multimodelo */}
                   <div className="flex flex-wrap gap-2 mt-3">
                     <button onClick={exportWord} className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 text-slate-500 hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700 text-[10px] font-bold uppercase tracking-wider transition-all">
                       <FileDown className="w-3.5 h-3.5" /> Word
@@ -723,7 +835,6 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
                     </button>
                   </div>
 
-                  {/* Resultado: Multimodelo */}
                   {Object.keys(multiResults).length > 0 && (
                     <div className="mt-4 space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
                       <div className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">El mismo prompt en los 3 modelos</div>
@@ -744,7 +855,6 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
                     </div>
                   )}
 
-                  {/* Resultado: Evaluar */}
                   {evalResult && (
                     <div className="mt-4 space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -790,7 +900,6 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
                     </div>
                   )}
 
-                  {/* Resultado: Mejorar */}
                   {refineResult && (
                     <div className="mt-4 space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
                       <div className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Versión mejorada</div>
@@ -802,7 +911,6 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
                     </div>
                   )}
 
-                  {/* Resultado: Ejecutar */}
                   {runResult && (
                     <div className="mt-4 space-y-2 animate-in fade-in slide-in-from-top-2 duration-300">
                       <div className="text-[10px] font-bold text-cyan-600 uppercase tracking-wider">Respuesta de la IA</div>
@@ -810,7 +918,6 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
                     </div>
                   )}
 
-                  {/* Resultado: Explicar */}
                   {explainResult && (
                     <div className="mt-4 space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
                       {Array.isArray(explainResult.tecnicas) && explainResult.tecnicas.length > 0 && (
@@ -857,7 +964,7 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
         </Card>
       </div>
 
-      {/* ══════════ COMPARADOR A/B ══════════ */}
+      {/* Comparador A/B (igual que antes) */}
       {compareMode && (variantA || variantB || comparing) && (
         <div className="pt-4">
           <div className="flex items-center justify-between mb-1">
@@ -903,67 +1010,97 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
         </div>
       )}
 
-      {/* ══════════ HISTORIAL DE VERSIONES ══════════ */}
+      {/* Historial (igual que antes) */}
       {history.length > 0 && (
         <div className="pt-4">
           <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
             <History className="w-4 h-4 text-indigo-500" /> Historial
           </div>
           <h3 className="text-2xl font-extrabold tracking-tight text-slate-900">Historial de prompts</h3>
-          <p className="text-sm text-slate-500 mb-4">Todos los prompts construidos en esta zona se guardan en el servidor y se ven desde cualquier navegador o dispositivo. Recupera cualquiera con un clic.</p>
-          <div className="space-y-5">
-            {groupHistoryByDay(history).map((group) => (
-              <div key={group.key}>
-                <div className="flex items-center gap-3 mb-2">
-                  <span className="text-xs font-bold text-slate-700 capitalize">{group.label}</span>
-                  <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{group.items.length}</span>
-                  <div className="flex-1 h-px bg-slate-100" />
+          <p className="text-sm text-slate-500 mb-4">Selecciona un día en el calendario para ver los prompts de ese día. Todos los prompts se guardan en el servidor y son accesibles desde cualquier dispositivo.</p>
+          
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div>
+              <button 
+                onClick={() => setCalendarOpen(!calendarOpen)}
+                className="w-full flex items-center justify-between px-4 py-3 rounded-xl border-2 border-slate-200 text-slate-700 hover:border-indigo-300 hover:bg-indigo-50 font-bold text-sm mb-3 transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <Calendar className="w-5 h-5" />
+                  Selecciona un día
                 </div>
-                <div className="space-y-2">
-                  {group.items.map((v) => (
-                    <Card key={v.id} className="rounded-xl border-slate-200 shadow-sm overflow-hidden">
-                      <div className="flex items-center gap-3 px-4 py-3">
-                        <Layers className="w-4 h-4 text-slate-300 flex-shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full uppercase">{v.label}</span>
-                            <span className="text-[10px] text-slate-400">{new Date(v.at).toLocaleTimeString("es-ES")}</span>
-                            <span className="text-[10px] text-slate-300">~{estimateTokens(v.content)} tokens</span>
-                          </div>
-                          <p className="text-xs text-slate-500 truncate mt-1">{v.content.slice(0, 120)}</p>
-                        </div>
-                        <Button variant="ghost" size="sm" onClick={() => { setGeneratedPrompt(v.content); window.scrollTo({ top: 0, behavior: "smooth" }); toast.success("Versión recuperada"); }}
-                          className="rounded-lg text-[10px] font-bold uppercase text-slate-500 hover:text-indigo-600 flex-shrink-0">
-                          <RefreshCcw className="w-3.5 h-3.5 mr-1" /> Recuperar
-                        </Button>
-                      </div>
-                    </Card>
-                  ))}
-                </div>
-              </div>
-            ))}
-            <div className="flex items-center gap-3">
-              <button onClick={() => {
-                  const txt = history.map((v, i) => `### Prompt ${history.length - i} · ${v.label} · ${new Date(v.at).toLocaleString("es-ES")}\n\n${v.content}\n\n${"=".repeat(60)}\n`).join("\n");
-                  const blob = new Blob([txt], { type: "text/plain;charset=utf-8" });
-                  const a = document.createElement("a");
-                  a.href = URL.createObjectURL(blob);
-                  a.download = `historial-prompts-${new Date().toISOString().split("T")[0]}.txt`;
-                  a.click();
-                  URL.revokeObjectURL(a.href);
-                  toast.success("Historial descargado");
-                }} className="text-[10px] font-bold text-slate-400 hover:text-indigo-600 uppercase tracking-wider flex items-center gap-1">
-                <FileDown className="w-3 h-3" /> Descargar todo
+                <ChevronDown className={cn("w-4 h-4 transition-transform", calendarOpen && "rotate-180")} />
               </button>
-              <button onClick={clearHistory} className="text-[10px] font-bold text-slate-400 hover:text-rose-600 uppercase tracking-wider flex items-center gap-1">
-                <X className="w-3 h-3" /> Vaciar historial
-              </button>
+              {calendarOpen && <Calendar />}
             </div>
+
+            <div className="lg:col-span-2">
+              {selectedDate ? (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="text-sm font-bold text-slate-700">
+                      {selectedDate.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                    </div>
+                    <span className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">
+                      {getPromptsForDay(selectedDate).length} prompts
+                    </span>
+                  </div>
+
+                  {getPromptsForDay(selectedDate).length > 0 ? (
+                    getPromptsForDay(selectedDate).map((v) => (
+                      <Card key={v.id} className="rounded-xl border-slate-200 shadow-sm overflow-hidden">
+                        <div className="flex items-center gap-3 px-4 py-3">
+                          <Layers className="w-4 h-4 text-slate-300 flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full uppercase">{v.label}</span>
+                              <span className="text-[10px] text-slate-400">{new Date(v.at).toLocaleTimeString("es-ES")}</span>
+                              <span className="text-[10px] text-slate-300">~{estimateTokens(v.content)} tokens</span>
+                            </div>
+                            <p className="text-xs text-slate-500 truncate mt-1">{v.content.slice(0, 120)}</p>
+                          </div>
+                          <Button variant="ghost" size="sm" onClick={() => { setGeneratedPrompt(v.content); window.scrollTo({ top: 0, behavior: "smooth" }); toast.success("Versión recuperada"); }}
+                            className="rounded-lg text-[10px] font-bold uppercase text-slate-500 hover:text-indigo-600 flex-shrink-0">
+                            <RefreshCcw className="w-3.5 h-3.5 mr-1" /> Recuperar
+                          </Button>
+                        </div>
+                      </Card>
+                    ))
+                  ) : (
+                    <div className="flex items-center justify-center h-32 text-slate-300 text-sm">
+                      Sin prompts en este día
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center justify-center h-32 text-slate-400 text-sm">
+                  Selecciona un día en el calendario para ver sus prompts
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-6 flex items-center gap-3 pt-4 border-t border-slate-100">
+            <button onClick={() => {
+                const txt = history.map((v, i) => `### Prompt ${history.length - i} · ${v.label} · ${new Date(v.at).toLocaleString("es-ES")}\n\n${v.content}\n\n${"=".repeat(60)}\n`).join("\n");
+                const blob = new Blob([txt], { type: "text/plain;charset=utf-8" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = `historial-prompts-${new Date().toISOString().split("T")[0]}.txt`;
+                a.click();
+                URL.revokeObjectURL(a.href);
+                toast.success("Historial descargado");
+              }} className="text-[10px] font-bold text-slate-400 hover:text-indigo-600 uppercase tracking-wider flex items-center gap-1">
+              <FileDown className="w-3 h-3" /> Descargar todo
+            </button>
+            <button onClick={clearHistory} className="text-[10px] font-bold text-slate-400 hover:text-rose-600 uppercase tracking-wider flex items-center gap-1">
+              <X className="w-3 h-3" /> Vaciar historial
+            </button>
           </div>
         </div>
       )}
 
-      {/* ══════════ FRAMEWORK C.R.E.F.O. ══════════ */}
+      {/* Framework C.R.E.F.O. (igual que antes) */}
       <div className="pt-4">
         <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
           <Sparkles className="w-4 h-4 text-indigo-500" /> Framework
@@ -991,14 +1128,14 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
           ))}
         </div>
         <button
-          onClick={() => { setCrefoMode(true); window.scrollTo({ top: 0, behavior: "smooth" }); toast.success("Constructor C.R.E.F.O. activado"); }}
+          onClick={() => { setMode("crefo"); window.scrollTo({ top: 0, behavior: "smooth" }); toast.success("Constructor C.R.E.F.O. activado"); }}
           className="mt-4 inline-flex items-center gap-2 text-xs font-bold text-indigo-600 hover:text-indigo-800 uppercase tracking-wider"
         >
           <Sparkles className="w-4 h-4" /> Construir un prompt con C.R.E.F.O.
         </button>
       </div>
 
-      {/* ══════════ GUÍA DE TÉCNICAS DE PROMPT ══════════ */}
+      {/* Guía de Técnicas (igual que antes) */}
       <div className="pt-4">
         <div className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest mb-1">
           <BookOpen className="w-4 h-4 text-indigo-500" /> Guía de Técnicas
@@ -1069,7 +1206,7 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
                               <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">Ejemplos prácticos</div>
                               <div className="flex flex-wrap gap-2">
                                 {tech.examples.map((ex, i) => (
-                                  <button key={i} onClick={() => { setTopic(ex); setSelectedTechnique(tech.id); toast.success("Ejemplo cargado en el objetivo"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+                                  <button key={i} onClick={() => { setTopic(ex); setSelectedTechnique(tech.id); setMode("simple"); toast.success("Ejemplo cargado en el objetivo"); window.scrollTo({ top: 0, behavior: "smooth" }); }}
                                     className="text-xs text-slate-700 bg-white border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 rounded-lg px-3 py-1.5 transition-colors text-left">
                                     {ex}
                                   </button>
@@ -1106,13 +1243,13 @@ export function PromptGenerator({ db, updateDb }: PromptGeneratorProps) {
                             </div>
 
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                              <Button onClick={() => { setSelectedTechnique(tech.id); setCrefoMode(false); window.scrollTo({ top: 0, behavior: "smooth" }); toast.success(`Técnica "${tech.name}" activada`); }}
+                              <Button onClick={() => { setSelectedTechnique(tech.id); setMode("simple"); window.scrollTo({ top: 0, behavior: "smooth" }); toast.success(`Técnica "${tech.name}" activada`); }}
                                 className="w-full rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold uppercase tracking-widest text-xs h-11">
                                 <Sparkles className="w-4 h-4 mr-2" /> Aplicar esta técnica
                               </Button>
                               <Button onClick={() => {
                                   setSelectedTechnique(tech.id);
-                                  setCrefoMode(true);
+                                  setMode("crefo");
                                   if (!crefoEspecificos.trim()) setCrefoEspecificos(`Aplica la técnica ${tech.name}: ${tech.short}`);
                                   if (!crefoObjetivo.trim() && tech.examples[0]) setCrefoObjetivo(tech.examples[0]);
                                   window.scrollTo({ top: 0, behavior: "smooth" });

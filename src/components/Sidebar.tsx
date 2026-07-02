@@ -11,7 +11,6 @@ import {
   Activity,
   Wrench,
   Braces,
-  Sparkles,
   ExternalLink
 } from "lucide-react";
 import cibermedidaIcon from "../assets/cibermedida-icon.png";
@@ -29,7 +28,6 @@ export function Sidebar({ activeTab, setActiveTab, isOpen, onClose, theme, setTh
   const menuItems = [
     { id: "dashboard", label: "Panel de Control", icon: LayoutDashboard },
     { id: "prompts", label: "Lab de Prompts", icon: Terminal },
-    { id: "agent", label: "Agente Guiado", icon: Sparkles },
     { id: "automation", label: "Automatizaciones", icon: Zap },
     { id: "skills", label: "Constructor de Skills", icon: Wrench },
     { id: "json", label: "JSON Builder", icon: Braces },
